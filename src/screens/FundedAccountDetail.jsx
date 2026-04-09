@@ -4,6 +4,7 @@ import { ArrowLeft, Archive, TrendingUp, TrendingDown, Minus } from 'lucide-reac
 import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useToast } from '../components/ui/Toast';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 export default function FundedAccountDetail() {
   const { id } = useParams();
@@ -299,6 +300,44 @@ export default function FundedAccountDetail() {
           </div>
         </div>
       )}
+
+      {/* Curva de Equity */}
+      {trades.length >= 2 && (() => {
+        const sorted = [...trades].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
+        const equityData = sorted.reduce((acc, t) => {
+          const prev = acc.length > 0 ? acc[acc.length - 1].pnl : 0;
+          const cumPnl = prev + (t.pnl_usd || 0);
+          const d = new Date(t.fecha);
+          const label = `${d.getDate()}/${d.getMonth() + 1}`;
+          return [...acc, { label, pnl: Number(cumPnl.toFixed(2)) }];
+        }, []);
+        const finalPnl = equityData[equityData.length - 1]?.pnl || 0;
+        const lineColor = finalPnl >= 0 ? '#30d158' : '#ff453a';
+        return (
+          <div style={styles.equityCard}>
+            <h3 style={styles.sectionTitle}>CURVA DE EQUITY</h3>
+            <ResponsiveContainer width="100%" height={160}>
+              <AreaChart data={equityData} margin={{ top: 8, right: 4, left: -24, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="eqGradFunded" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={lineColor} stopOpacity={0.25} />
+                    <stop offset="95%" stopColor={lineColor} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="label" tick={{ fill: '#636366', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#636366', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1c1c1e', border: '1px solid #2c2c2e', borderRadius: 10, fontSize: 12 }}
+                  labelStyle={{ color: '#ebebf5' }}
+                  formatter={(v) => [`$${v}`, 'PnL acum.']}
+                />
+                <Area type="monotone" dataKey="pnl" stroke={lineColor} strokeWidth={2} fill="url(#eqGradFunded)" dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      })()}
 
       {/* Historial de trades */}
       <div style={styles.section}>

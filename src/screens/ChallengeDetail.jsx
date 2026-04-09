@@ -5,6 +5,7 @@ import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs } 
 import { db } from '../lib/firebase';
 import { useTradingStore } from '../store/useTradingStore';
 import { useToast } from '../components/ui/Toast';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 export default function ChallengeDetail() {
   const { id } = useParams();
@@ -195,6 +196,44 @@ export default function ChallengeDetail() {
         </div>
       </div>
 
+      {/* Curva de Equity */}
+      {trades.length >= 2 && (() => {
+        const sorted = [...trades].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
+        const equityData = sorted.reduce((acc, t) => {
+          const prev = acc.length > 0 ? acc[acc.length - 1].pnl : 0;
+          const cumPnl = prev + (t.pnl_usd || 0);
+          const d = new Date(t.fecha);
+          const label = `${d.getDate()}/${d.getMonth() + 1}`;
+          return [...acc, { label, pnl: Number(cumPnl.toFixed(2)) }];
+        }, []);
+        const finalPnl = equityData[equityData.length - 1]?.pnl || 0;
+        const lineColor = finalPnl >= 0 ? '#30d158' : '#ff453a';
+        return (
+          <div style={styles.equityCard}>
+            <h3 style={styles.sectionTitle}>CURVA DE EQUITY</h3>
+            <ResponsiveContainer width="100%" height={160}>
+              <AreaChart data={equityData} margin={{ top: 8, right: 4, left: -24, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="eqGradChallenge" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={lineColor} stopOpacity={0.25} />
+                    <stop offset="95%" stopColor={lineColor} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="label" tick={{ fill: '#636366', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#636366', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1c1c1e', border: '1px solid #2c2c2e', borderRadius: 10, fontSize: 12 }}
+                  labelStyle={{ color: '#ebebf5' }}
+                  formatter={(v) => [`$${v}`, 'PnL acum.']}
+                />
+                <Area type="monotone" dataKey="pnl" stroke={lineColor} strokeWidth={2} fill="url(#eqGradChallenge)" dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      })()}
+
       {/* Trades */}
       <div style={styles.section}>
         <div style={styles.sectionHeader}>
@@ -313,6 +352,7 @@ const styles = {
   linkBtn: { backgroundColor: 'var(--accent-blue)', border: 'none', color: '#fff', fontSize: '14px', fontWeight: '600', cursor: 'pointer', padding: '8px 16px', borderRadius: '12px' },
   emptyTrades: { backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: '16px', padding: '40px 24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '14px' },
   tradesList: { display: 'flex', flexDirection: 'column', gap: '10px' },
+  equityCard: { backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: '16px', padding: '16px 16px 10px', marginBottom: '24px' },
   tradeCard: { display: 'flex', alignItems: 'center', gap: '14px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: '16px', padding: '14px 16px' },
   tradeIcon: { width: '40px', height: '40px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   tradeInfo: { flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' },
