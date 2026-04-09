@@ -10,17 +10,37 @@ export default function Metricas() {
   const [trades, setTrades] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const [accountsMap, setAccountsMap] = useState({});
+
   useEffect(() => {
     async function load() {
       setLoading(true);
       try {
         const userId = 'user_test_123';
+
+        // Cargar trades
         const q = query(collection(db, 'trades'), where('user_id', '==', userId));
         const snap = await getDocs(q);
         const all = snap.docs
           .map(d => ({ id: d.id, ...d.data() }))
           .sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
         setTrades(all);
+
+        // Cargar cuentas (challenges + fondeadas) para mapear balance_inicial_usd
+        const accMap = {};
+        const qAcc = query(collection(db, 'accounts'), where('user_id', '==', userId));
+        const accSnap = await getDocs(qAcc);
+        accSnap.docs.forEach(d => {
+          const data = d.data();
+          accMap[d.id] = data.balance_inicial_usd || 10000;
+        });
+        const qFunded = query(collection(db, 'funded_accounts'), where('user_id', '==', userId));
+        const fundedSnap = await getDocs(qFunded);
+        fundedSnap.docs.forEach(d => {
+          const data = d.data();
+          accMap[d.id] = data.balance_inicial_usd || 10000;
+        });
+        setAccountsMap(accMap);
       } catch (err) {
         console.error(err);
       }
@@ -92,9 +112,13 @@ export default function Metricas() {
   const recentAvgLoss = recentLosses.length > 0 ? recentLosses.reduce((a, t) => a + (t.pnl_usd || 0), 0) / recentLosses.length : 0;
   const recentRR = Math.abs(recentAvgLoss) > 0 ? Math.abs(recentAvgWin) / Math.abs(recentAvgLoss) : 0;
 
-  // Mayor ganancia y mayor pérdida individuales
-  const biggestWin = wins.length > 0 ? Math.max(...wins.map(t => t.pnl_usd || 0)) : 0;
-  const biggestLoss = losses.length > 0 ? Math.min(...losses.map(t => t.pnl_usd || 0)) : 0;
+  // Mayor ganancia y mayor pérdida individuales — en porcentaje del balance inicial de la cuenta
+  const getTradeBalancePct = (t) => {
+    const bal = accountsMap[t.account_id] || 10000;
+    return ((t.pnl_usd || 0) / bal) * 100;
+  };
+  const biggestWinPct = wins.length > 0 ? Math.max(...wins.map(t => getTradeBalancePct(t))) : 0;
+  const biggestLossPct = losses.length > 0 ? Math.min(...losses.map(t => getTradeBalancePct(t))) : 0;
 
   // Recomendaciones inteligentes
   const getWinLossRecommendations = () => {
@@ -152,12 +176,12 @@ export default function Metricas() {
         });
       }
     }
-    // Dato clave sobre la mayor ganancia vs mayor pérdida
-    if (Math.abs(biggestLoss) > biggestWin * 1.5 && biggestWin > 0) {
+    // Dato clave sobre la mayor ganancia vs mayor pérdida (en porcentaje)
+    if (Math.abs(biggestLossPct) > biggestWinPct * 1.5 && biggestWinPct > 0) {
       recs.push({
         icon: '💡',
         title: 'Tu peor pérdida es mucho mayor que tu mejor ganancia',
-        text: `Mayor pérdida: $${Math.abs(biggestLoss).toFixed(0)} vs Mayor ganancia: $${biggestWin.toFixed(0)}. Un solo trade malo puede borrar varias ganancias. Considerá poner un stop loss máximo fijo.`,
+        text: `Mayor pérdida: ${Math.abs(biggestLossPct).toFixed(2)}% vs Mayor ganancia: ${biggestWinPct.toFixed(2)}%. Un solo trade malo puede borrar varias ganancias. Considerá poner un stop loss máximo fijo.`,
         severity: 'danger'
       });
     }
@@ -247,12 +271,12 @@ export default function Metricas() {
           <div style={styles.wlKpiRow}>
             <div style={styles.wlKpiItem}>
               <span style={styles.wlKpiLabel}>Mayor ganancia</span>
-              <span style={{ ...styles.wlKpiValue, color: '#30d158' }}>+${biggestWin.toFixed(0)}</span>
+              <span style={{ ...styles.wlKpiValue, color: '#30d158' }}>+{biggestWinPct.toFixed(2)}%</span>
             </div>
             <div style={{ width: '1px', backgroundColor: 'rgba(255,255,255,0.08)', alignSelf: 'stretch' }} />
             <div style={styles.wlKpiItem}>
               <span style={styles.wlKpiLabel}>Mayor pérdida</span>
-              <span style={{ ...styles.wlKpiValue, color: '#ff453a' }}>-${Math.abs(biggestLoss).toFixed(0)}</span>
+              <span style={{ ...styles.wlKpiValue, color: '#ff453a' }}>-{Math.abs(biggestLossPct).toFixed(2)}%</span>
             </div>
             <div style={{ width: '1px', backgroundColor: 'rgba(255,255,255,0.08)', alignSelf: 'stretch' }} />
             <div style={styles.wlKpiItem}>
