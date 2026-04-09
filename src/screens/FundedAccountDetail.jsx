@@ -100,7 +100,6 @@ export default function FundedAccountDetail() {
   const perdidaRecomendadaMax = Math.round(inicial * 0.005); // max 0.5% del inicial por día
 
   const winCount = trades.filter(t => t.resultado === 'WIN').length;
-  const lossCount = trades.filter(t => t.resultado === 'LOSS').length;
   const winRate = trades.length > 0 ? Math.round((winCount / trades.length) * 100) : 0;
 
   const pnlColor = pnl > 0 ? 'var(--accent-green)' : pnl < 0 ? 'var(--accent-red)' : 'var(--text-secondary)';

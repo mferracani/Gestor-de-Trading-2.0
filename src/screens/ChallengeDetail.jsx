@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { ArrowLeft, Edit3, Archive, TrendingUp, TrendingDown, Minus, Trash2, X, Check } from 'lucide-react';
 import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
@@ -19,11 +19,7 @@ export default function ChallengeDetail() {
   const [editForm, setEditForm] = useState({});
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    load();
-  }, [id]);
-
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const docRef = doc(db, 'accounts', id);
@@ -51,7 +47,9 @@ export default function ChallengeDetail() {
       console.error('Error cargando detalle de cuenta:', err);
     }
     setLoading(false);
-  }
+  }, [id]);
+
+  useEffect(() => { load(); }, [load]);
 
   const handleArchive = async () => {
     if (!window.confirm('¿Archivar esta cuenta? Desaparecerá de los slots activos.')) return;

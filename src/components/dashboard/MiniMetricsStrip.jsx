@@ -1,6 +1,6 @@
 import { TrendingUp, Shield } from 'lucide-react';
 
-export default function MiniMetricsStrip({ challenge, accounts }) {
+export default function MiniMetricsStrip({ challenge }) {
   if (!challenge) return null;
 
   // PnL de la cuenta activa

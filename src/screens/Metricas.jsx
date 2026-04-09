@@ -47,13 +47,13 @@ export default function Metricas() {
   // ── Cálculos ──────────────────────────────────────────────────────────────
 
   // 1. Curva de equity acumulada
-  let cumPnl = 0;
-  const equityCurve = trades.map(t => {
-    cumPnl += t.pnl_usd || 0;
+  const equityCurve = trades.reduce((acc, t) => {
+    const prev = acc.length > 0 ? acc[acc.length - 1].pnl : 0;
+    const cumPnl = prev + (t.pnl_usd || 0);
     const d = new Date(t.fecha);
     const label = `${d.getDate()}/${d.getMonth() + 1}`;
-    return { label, pnl: cumPnl, trade_pnl: t.pnl_usd || 0 };
-  });
+    return [...acc, { label, pnl: cumPnl, trade_pnl: t.pnl_usd || 0 }];
+  }, []);
 
   // 2. Estadísticas generales
   const totalTrades = trades.length;
