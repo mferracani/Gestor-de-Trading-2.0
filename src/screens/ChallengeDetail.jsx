@@ -5,7 +5,7 @@ import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs } 
 import { db } from '../lib/firebase';
 import { useTradingStore } from '../store/useTradingStore';
 import { useToast } from '../components/ui/Toast';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 export default function ChallengeDetail() {
   const { id } = useParams();
@@ -221,12 +221,22 @@ export default function ChallengeDetail() {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                 <XAxis dataKey="label" tick={{ fill: '#636366', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: '#636366', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis 
+                  tick={{ fill: '#636366', fontSize: 11 }} 
+                  axisLine={false} 
+                  tickLine={false} 
+                  domain={[
+                    dataMin => Math.min(0, dataMin, -(account.max_loss_usd || 0)), 
+                    dataMax => Math.max(0, dataMax, (account.objetivo_usd || 0))
+                  ]}
+                />
                 <Tooltip
                   contentStyle={{ backgroundColor: '#1c1c1e', border: '1px solid #2c2c2e', borderRadius: 10, fontSize: 12 }}
                   labelStyle={{ color: '#ebebf5' }}
                   formatter={(v) => [`$${v}`, 'PnL acum.']}
                 />
+                <ReferenceLine y={account.objetivo_usd} stroke="var(--accent-green)" strokeDasharray="3 3" opacity={0.3} />
+                <ReferenceLine y={-(account.max_loss_usd || 0)} stroke="var(--accent-red)" strokeDasharray="3 3" opacity={0.3} />
                 <Area type="monotone" dataKey="pnl" stroke={lineColor} strokeWidth={2} fill="url(#eqGradChallenge)" dot={false} />
               </AreaChart>
             </ResponsiveContainer>

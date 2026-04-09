@@ -4,7 +4,7 @@ import { ArrowLeft, Archive, TrendingUp, TrendingDown, Minus } from 'lucide-reac
 import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useToast } from '../components/ui/Toast';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 export default function FundedAccountDetail() {
   const { id } = useParams();
@@ -326,12 +326,22 @@ export default function FundedAccountDetail() {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                 <XAxis dataKey="label" tick={{ fill: '#636366', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: '#636366', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis 
+                  tick={{ fill: '#636366', fontSize: 11 }} 
+                  axisLine={false} 
+                  tickLine={false} 
+                  domain={[
+                    dataMin => Math.min(0, dataMin, -(account.max_loss_usd || inicial * 0.1)), 
+                    dataMax => Math.max(0, dataMax, targetRetiroUsd)
+                  ]}
+                />
                 <Tooltip
                   contentStyle={{ backgroundColor: '#1c1c1e', border: '1px solid #2c2c2e', borderRadius: 10, fontSize: 12 }}
                   labelStyle={{ color: '#ebebf5' }}
                   formatter={(v) => [`$${v}`, 'PnL acum.']}
                 />
+                <ReferenceLine y={targetRetiroUsd} stroke="var(--accent-green)" strokeDasharray="3 3" opacity={0.3} />
+                <ReferenceLine y={-(account.max_loss_usd || inicial * 0.1)} stroke="var(--accent-red)" strokeDasharray="3 3" opacity={0.3} />
                 <Area type="monotone" dataKey="pnl" stroke={lineColor} strokeWidth={2} fill="url(#eqGradFunded)" dot={false} />
               </AreaChart>
             </ResponsiveContainer>
