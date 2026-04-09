@@ -95,6 +95,7 @@ export default function TradeCreate() {
             <option value="EURUSD">EUR / USD</option>
             <option value="GBPUSD">GBP / USD</option>
             <option value="XAUUSD">XAU / USD (Oro)</option>
+            <option value="XAGUSD">XAG / USD (Plata)</option>
             <option value="USOIL">USOIL (Petróleo WTI)</option>
             <option value="US30">US30 (Dow)</option>
             <option value="NAS100">NAS100 (Nasdaq)</option>
