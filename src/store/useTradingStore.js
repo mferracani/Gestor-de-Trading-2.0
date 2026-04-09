@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { collection, query, where, getDocs, doc, writeBatch } from 'firebase/firestore';
+import { collection, query, where, getDocs, getDoc, doc, writeBatch } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
 export const useTradingStore = create((set) => ({
@@ -155,6 +155,45 @@ export const useTradingStore = create((set) => ({
       return { success: true, rotatedTo: nextActiveAccountId, reason: stopTradingReason };
     } catch (error) {
       console.error("Error registrando trade:", error);
+      throw error;
+    }
+  },
+
+  registerFundedTrade: async (accountId, tradeData) => {
+    try {
+      // Buscar la cuenta en la colección correcta: funded_accounts
+      const accountRef = doc(db, 'funded_accounts', accountId);
+      const accountSnap = await getDoc(accountRef);
+      if (!accountSnap.exists()) throw new Error('Cuenta no encontrada');
+
+      const account = { id: accountSnap.id, ...accountSnap.data() };
+      const finalPnl = Number(tradeData.pnl_usd || 0);
+      const newBalance = (account.balance_actual_usd || account.balance_inicial_usd || 0) + finalPnl;
+      const newPnl = (account.pnl_acumulado_usd || 0) + finalPnl;
+
+      const batch = writeBatch(db);
+
+      // Crear el trade vinculado a la cuenta fondeada
+      const newTradeRef = doc(collection(db, 'trades'));
+      batch.set(newTradeRef, {
+        ...tradeData,
+        user_id: account.user_id || 'user_test_123',
+        account_id: accountId,
+        tipo_cuenta: 'fondeada',
+        pnl_usd: finalPnl,
+        fecha: new Date().toISOString()
+      });
+
+      // Actualizar balance y PnL de la cuenta fondeada
+      batch.update(accountRef, {
+        balance_actual_usd: newBalance,
+        pnl_acumulado_usd: newPnl,
+      });
+
+      await batch.commit();
+      return { success: true };
+    } catch (error) {
+      console.error('Error registrando trade fondeada:', error);
       throw error;
     }
   }

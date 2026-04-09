@@ -322,24 +322,33 @@ export default function FundedAccountDetail() {
             {trades.map(trade => {
               const isWin = trade.resultado === 'WIN';
               const isLoss = trade.resultado === 'LOSS';
+              const pnl = trade.pnl_usd || 0;
+              const fecha = trade.fecha
+                ? new Date(trade.fecha).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+                : '—';
               return (
                 <div key={trade.id} style={styles.tradeCard}>
-                  <div style={styles.tradeIcon}>
-                    {isWin && <TrendingUp size={20} color="var(--accent-green)" />}
-                    {isLoss && <TrendingDown size={20} color="var(--accent-red)" />}
-                    {!isWin && !isLoss && <Minus size={20} color="#8e8e93" />}
+                  <div style={{
+                    ...styles.tradeIcon,
+                    backgroundColor: isWin ? 'rgba(48,209,88,0.12)' : isLoss ? 'rgba(255,69,58,0.12)' : 'rgba(255,255,255,0.05)'
+                  }}>
+                    {isWin && <TrendingUp size={18} color="#30d158" />}
+                    {isLoss && <TrendingDown size={18} color="#ff453a" />}
+                    {!isWin && !isLoss && <Minus size={18} color="var(--text-muted)" />}
                   </div>
-                  <div style={styles.tradeDetails}>
+                  <div style={styles.tradeInfo}>
                     <div style={styles.tradeAsset}>{trade.activo}</div>
-                    <div style={styles.tradeDate}>
-                      {new Date(trade.fecha).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    <div style={styles.tradeMeta}>
+                      <span style={styles.accountTag}>{account.nombre}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>·</span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{fecha}</span>
                     </div>
                   </div>
                   <div style={{
                     ...styles.tradePnl,
-                    color: isWin ? 'var(--accent-green)' : isLoss ? 'var(--accent-red)' : 'var(--text-secondary)'
+                    color: isWin ? '#30d158' : isLoss ? '#ff453a' : 'var(--text-muted)'
                   }}>
-                    {isWin ? '+' : ''}{trade.pnl_usd === 0 ? 'B.E.' : `$${trade.pnl_usd}`}
+                    {pnl === 0 ? 'B.E.' : `${pnl > 0 ? '+' : ''}$${pnl.toLocaleString()}`}
                   </div>
                 </div>
               );
@@ -401,20 +410,13 @@ const styles = {
     color: 'var(--text-secondary)', fontSize: '14px',
   },
   tradesList: { display: 'flex', flexDirection: 'column', gap: '10px' },
-  tradeCard: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)',
-    borderRadius: '14px', padding: '14px 16px',
-  },
-  tradeIcon: {
-    width: '38px', height: '38px', borderRadius: '10px',
-    backgroundColor: 'var(--bg-tertiary)', display: 'flex',
-    alignItems: 'center', justifyContent: 'center', marginRight: '12px',
-  },
-  tradeDetails: { flex: 1, display: 'flex', flexDirection: 'column', gap: '3px' },
-  tradeAsset: { fontSize: '15px', fontWeight: '600' },
-  tradeDate: { fontSize: '12px', color: 'var(--text-secondary)' },
-  tradePnl: { fontSize: '16px', fontWeight: '700' },
+  tradeCard: { display: 'flex', alignItems: 'center', gap: '14px', backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: '16px', padding: '14px 16px' },
+  tradeIcon: { width: '40px', height: '40px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  tradeInfo: { flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' },
+  tradeAsset: { fontSize: '15px', fontWeight: '600', color: 'var(--text-primary)' },
+  tradeMeta: { display: 'flex', alignItems: 'center', gap: '6px' },
+  accountTag: { fontSize: '12px', color: 'var(--accent-blue)', fontWeight: '500', backgroundColor: 'rgba(10,132,255,0.1)', padding: '2px 8px', borderRadius: '6px' },
+  tradePnl: { fontSize: '16px', fontWeight: '700', flexShrink: 0 },
 
   // ── Expert guide panel ──────────────────────────────────
   guiaCard: {

@@ -8,6 +8,7 @@ export default function TradeCreate() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const accountId = searchParams.get('accountId') || '';
+  const tipo = searchParams.get('tipo') || 'challenge'; // 'fondeada' | 'challenge'
   
   const toast = useToast();
   const [loading, setLoading] = useState(false);
@@ -38,8 +39,8 @@ export default function TradeCreate() {
         finalPnl = Math.abs(finalPnl);
       }
 
-      // 1. Usar el store global que maneja la rotación auto
-      const { registerTrade } = useTradingStore.getState();
+      // 1. Usar el store global — elegir función según tipo de cuenta
+      const { registerTrade, registerFundedTrade } = useTradingStore.getState();
       const tradeData = {
         activo: formData.activo,
         resultado: formData.resultado,
@@ -47,7 +48,9 @@ export default function TradeCreate() {
         notas: formData.notas
       };
 
-      const result = await registerTrade(accountId, tradeData);
+      const result = tipo === 'fondeada'
+        ? await registerFundedTrade(accountId, tradeData)
+        : await registerTrade(accountId, tradeData);
       
       if (result.reason) {
         toast(result.reason, result.reason.includes('Quemada') ? 'error' : 'warning');
@@ -55,10 +58,13 @@ export default function TradeCreate() {
         toast('Trade registrado correctamente', 'success');
       }
       
+      // Navegar de vuelta al detalle de la cuenta para forzar recarga de datos y recomendaciones
       if (result.rotatedTo) {
         navigate('/');
+      } else if (tipo === 'fondeada') {
+        navigate(`/fondeadas/${accountId}`, { replace: true });
       } else {
-        navigate(-1);
+        navigate(`/challenges/${accountId}`, { replace: true });
       }
     } catch (err) {
       console.error('TradeError:', err);
@@ -89,6 +95,7 @@ export default function TradeCreate() {
             <option value="EURUSD">EUR / USD</option>
             <option value="GBPUSD">GBP / USD</option>
             <option value="XAUUSD">XAU / USD (Oro)</option>
+            <option value="USOIL">USOIL (Petróleo WTI)</option>
             <option value="US30">US30 (Dow)</option>
             <option value="NAS100">NAS100 (Nasdaq)</option>
           </select>
@@ -100,8 +107,9 @@ export default function TradeCreate() {
             <div 
               style={{
                 ...styles.option, 
-                backgroundColor: formData.resultado === 'WIN' ? 'var(--accent-green)' : 'var(--bg-secondary)',
-                color: formData.resultado === 'WIN' ? '#111' : 'var(--text-primary)'
+                backgroundColor: formData.resultado === 'WIN' ? 'rgba(48,209,88,0.18)' : 'var(--bg-secondary)',
+                border: formData.resultado === 'WIN' ? '1px solid #30d158' : '1px solid var(--border)',
+                color: formData.resultado === 'WIN' ? '#30d158' : 'var(--text-secondary)'
               }}
               onClick={() => setFormData({...formData, resultado: 'WIN'})}
             >
@@ -110,8 +118,9 @@ export default function TradeCreate() {
             <div 
               style={{
                 ...styles.option, 
-                backgroundColor: formData.resultado === 'LOSS' ? 'var(--accent-red)' : 'var(--bg-secondary)',
-                color: formData.resultado === 'LOSS' ? '#111' : 'var(--text-primary)'
+                backgroundColor: formData.resultado === 'LOSS' ? 'rgba(255,69,58,0.15)' : 'var(--bg-secondary)',
+                border: formData.resultado === 'LOSS' ? '1px solid #ff453a' : '1px solid var(--border)',
+                color: formData.resultado === 'LOSS' ? '#ff453a' : 'var(--text-secondary)'
               }}
               onClick={() => setFormData({...formData, resultado: 'LOSS'})}
             >
@@ -120,8 +129,9 @@ export default function TradeCreate() {
             <div 
               style={{
                 ...styles.option, 
-                backgroundColor: formData.resultado === 'BE' ? '#8e8e93' : 'var(--bg-secondary)',
-                color: formData.resultado === 'BE' ? '#111' : 'var(--text-primary)'
+                backgroundColor: formData.resultado === 'BE' ? 'rgba(142,142,147,0.15)' : 'var(--bg-secondary)',
+                border: formData.resultado === 'BE' ? '1px solid #8e8e93' : '1px solid var(--border)',
+                color: formData.resultado === 'BE' ? '#aeaeb2' : 'var(--text-secondary)'
               }}
               onClick={() => setFormData({...formData, resultado: 'BE'})}
             >
@@ -182,6 +192,7 @@ const styles = {
   input: { backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', padding: '16px', borderRadius: '16px', fontSize: '16px', outline: 'none' },
   inputArea: { backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', padding: '16px', borderRadius: '16px', fontSize: '16px', outline: 'none', resize: 'vertical' },
   optionsGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' },
-  option: { padding: '16px 0', textAlign: 'center', borderRadius: '16px', fontWeight: '700', cursor: 'pointer', border: '1px solid var(--border)', transition: 'all 0.2s' },
-  submitBtn: { backgroundColor: 'var(--accent-blue)', color: '#fff', border: 'none', borderRadius: '16px', padding: '18px', fontSize: '17px', fontWeight: '600', cursor: 'pointer', marginTop: '20px' }
+  option: { padding: '13px 0', textAlign: 'center', borderRadius: '14px', fontWeight: '700', cursor: 'pointer', fontSize: '14px', transition: 'all 0.2s', letterSpacing: '0.3px' },
+  submitBtn: { backgroundColor: 'var(--accent-blue)', color: '#fff', border: 'none', borderRadius: '14px', padding: '14px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', marginTop: '8px' }
 };
+

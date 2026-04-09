@@ -21,6 +21,9 @@ export default function AccountRecommendationCard({ accounts }) {
         <div>
           <p style={styles.recText}>
             Debes operar la <strong>{activeAccount.label}</strong>
+            {activeAccount.nombre && (
+              <span style={{ color: 'var(--text-secondary)', fontWeight: '400' }}> · {activeAccount.nombre}</span>
+            )}
           </p>
           <p style={styles.recSub}>
             Las otras cuentas están en descanso.
@@ -40,9 +43,12 @@ export default function AccountRecommendationCard({ accounts }) {
                 backgroundColor: isActive ? 'rgba(10, 132, 255, 0.1)' : 'var(--bg-primary)'
               }}
             >
-              <h3 style={{...styles.accName, color: isActive ? 'var(--accent-blue)' : 'var(--text-primary)'}}>
+              <h3 style={{...styles.accLabel, color: isActive ? 'var(--accent-blue)' : 'var(--text-primary)'}}>
                 {acc.label}
               </h3>
+              {acc.nombre && (
+                <p style={styles.accName}>{acc.nombre}</p>
+              )}
               <p style={styles.accStatus}>
                 {isActive ? 'Activa ahora' : 'En espera'}
               </p>
@@ -118,13 +124,23 @@ const styles = {
     textAlign: 'center',
     transition: 'all 0.2s ease',
   },
+  accLabel: {
+    fontSize: '14px',
+    fontWeight: '700',
+    marginBottom: '2px',
+    letterSpacing: '0.2px'
+  },
   accName: {
-    fontSize: '15px',
-    fontWeight: '600',
-    marginBottom: '4px'
+    fontSize: '11px',
+    color: 'var(--text-secondary)',
+    marginBottom: '4px',
+    fontWeight: '500',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis'
   },
   accStatus: {
-    fontSize: '13px',
+    fontSize: '12px',
     color: 'var(--text-secondary)'
   }
 };
