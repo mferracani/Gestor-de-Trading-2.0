@@ -16,7 +16,7 @@ export default function FundedAccountList() {
         const q = query(
           collection(db, 'funded_accounts'),
           where('user_id', '==', 'user_test_123'),
-          where('estado', '!=', 'archivada')
+          where('estado', '==', 'activo')
         );
         const snap = await getDocs(q);
         const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { ArrowLeft, Archive, TrendingUp, TrendingDown, Minus, CheckCircle, AlertTriangle, Info } from 'lucide-react';
+import { ArrowLeft, Archive, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useToast } from '../components/ui/Toast';
@@ -60,11 +60,10 @@ export default function FundedAccountDetail() {
   const progresoPct = Math.min(100, Math.max(0, (pnl / targetRetiroUsd) * 100));
   const isLogrado = faltaUsd <= 0 && pnl > 0;
 
-  // Regla de consistencia: agrupamos trades por día y comparamos el mejor día vs total de ganancias
-  // Igual a la lógica del broker: "Best Trading Day Profit" no puede superar X% del total
-  const limitePct = account.consistencia_pct || 40; // Usa el % guardado en la cuenta (default 40)
+  // ── Consistencia: agrupamos por día ──────────────────────────────────
+  const limitePct = account.consistencia_pct || 40;
   const tradesByDay = trades.reduce((acc, t) => {
-    const day = (t.fecha || '').slice(0, 10); // 'YYYY-MM-DD'
+    const day = (t.fecha || '').slice(0, 10);
     acc[day] = (acc[day] || 0) + (t.pnl_usd || 0);
     return acc;
   }, {});
@@ -74,12 +73,39 @@ export default function FundedAccountDetail() {
   const consistenciaPct = totalWins > 0 ? (bestDayProfit / totalWins) * 100 : 0;
   const consistenciaOk = account.regla_consistencia ? consistenciaPct <= limitePct : true;
 
+  // ── Recomendaciones expertas ──────────────────────────────────────────
+  // Para que la consistencia sea válida: totalWins necesita ser >= bestDay / (limitePct/100)
+  const totalWinsNecesario = bestDayProfit > 0 ? bestDayProfit / (limitePct / 100) : 0;
+  const ganarAdicionalNecesario = Math.max(0, totalWinsNecesario - totalWins);
+
+  // Zona segura para el próximo día ganador:
+  // Si la consistencia está OK: máximo = totalWins * limitePct/100 * 0.85 (con margen de seguridad)
+  // Si está en alerta: cualquier día ganador nuevo no debe superar bestDayProfit y debe aportar al total
+  const maxDiaSeguridadFactor = 0.85; // 85% del límite teórico para margen
+  const maxProximoDia = consistenciaOk
+    ? Math.floor(totalWins * (limitePct / 100) * maxDiaSeguridadFactor)
+    : Math.floor(Math.min(bestDayProfit * 0.7, ganarAdicionalNecesario * 0.5)); // no superar el bestDay
+  const minProximoDia = Math.max(10, Math.floor(maxProximoDia * 0.3));
+
+  // Días estimados para el objetivo de retiro (con días promedio entre min y max)
+  const avgDia = (minProximoDia + maxProximoDia) / 2;
+  const diasEstimadosRetiro = avgDia > 0 ? Math.ceil(faltaUsd / avgDia) : null;
+
+  // Escenario de pérdida: peor día entre los negatives o estimado del 0.5% de la cuenta
+  const worstDay = dailyPnls.filter(d => d < 0).length > 0
+    ? Math.abs(Math.min(...dailyPnls.filter(d => d < 0)))
+    : Math.round(inicial * 0.005);
+  const pnlTrasPerdida = pnl - worstDay;
+  const progresoTrasPerdida = Math.min(100, Math.max(0, (pnlTrasPerdida / targetRetiroUsd) * 100));
+  const perdidaRecomendadaMax = Math.round(inicial * 0.005); // max 0.5% del inicial por día
+
   const winCount = trades.filter(t => t.resultado === 'WIN').length;
   const lossCount = trades.filter(t => t.resultado === 'LOSS').length;
   const winRate = trades.length > 0 ? Math.round((winCount / trades.length) * 100) : 0;
 
   const pnlColor = pnl > 0 ? 'var(--accent-green)' : pnl < 0 ? 'var(--accent-red)' : 'var(--text-secondary)';
   const progressColor = isLogrado ? '#30d158' : 'var(--accent-blue)';
+  const fmt = (n) => `$${Math.abs(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return (
     <div style={styles.container}>
@@ -101,21 +127,21 @@ export default function FundedAccountDetail() {
 
       {/* Balance grid */}
       <div style={styles.balanceGrid}>
-        <div>
+        <div style={styles.gridCell}>
           <div style={styles.gridLabel}>Balance Inicial</div>
           <div style={styles.gridValue}>${inicial.toLocaleString()}</div>
         </div>
-        <div>
+        <div style={styles.gridCell}>
           <div style={styles.gridLabel}>Balance Actual</div>
           <div style={styles.gridValue}>${balance.toLocaleString()}</div>
         </div>
-        <div>
+        <div style={styles.gridCell}>
           <div style={styles.gridLabel}>PnL Total</div>
           <div style={{ ...styles.gridValue, color: pnlColor }}>
             {pnl >= 0 ? '+' : ''}${pnl.toLocaleString()}
           </div>
         </div>
-        <div>
+        <div style={styles.gridCell}>
           <div style={styles.gridLabel}>Win Rate</div>
           <div style={styles.gridValue}>{winRate}%</div>
         </div>
@@ -161,35 +187,116 @@ export default function FundedAccountDetail() {
         </div>
       </div>
 
-      {/* Regla de Consistencia */}
-      {account.regla_consistencia && (
+      {/* ── Panel de Análisis Experto ── */}
+      {account.regla_consistencia && trades.length > 0 && (
         <div style={{
-          ...styles.consistenciaCard,
-          borderColor: consistenciaOk ? 'rgba(10,132,255,0.2)' : 'rgba(255,69,58,0.3)',
-          backgroundColor: consistenciaOk ? 'rgba(10,132,255,0.06)' : 'rgba(255,69,58,0.08)',
+          ...styles.guiaCard,
+          borderColor: consistenciaOk ? 'rgba(48,209,88,0.25)' : 'rgba(255,159,10,0.3)',
+          backgroundColor: consistenciaOk ? 'rgba(48,209,88,0.05)' : 'rgba(255,159,10,0.06)',
         }}>
-          <div style={styles.consistenciaHeader}>
-            {consistenciaOk
-              ? <CheckCircle size={18} color="var(--accent-blue)" />
-              : <AlertTriangle size={18} color="var(--accent-red)" />
-            }
-            <span style={{ fontWeight: '600', fontSize: '14px', color: consistenciaOk ? 'var(--accent-blue)' : 'var(--accent-red)' }}>
-              Regla de Consistencia {consistenciaOk ? '✓' : '⚠️'}
-            </span>
+
+          {/* Encabezado */}
+          <div style={styles.guiaHeader}>
+            <div style={styles.guiaHeaderLeft}>
+              <span style={{ fontSize: 20 }}>{consistenciaOk ? '🧠' : '⚠️'}</span>
+              <div>
+                <div style={styles.guiaTitulo}>Análisis de Gestión</div>
+                <div style={styles.guiaSubtitulo}>
+                  Consistencia {limitePct}% · Mejor día: {fmt(bestDayProfit)} ({Math.round(consistenciaPct)}% del total)
+                </div>
+              </div>
+            </div>
+            <div style={{
+              ...styles.guiaBadge,
+              backgroundColor: consistenciaOk ? 'rgba(48,209,88,0.15)' : 'rgba(255,159,10,0.15)',
+              color: consistenciaOk ? '#30d158' : '#ff9f0a',
+            }}>
+              {consistenciaOk ? 'En regla' : 'Fuera de límite'}
+            </div>
           </div>
-          <p style={styles.consistenciaText}>
-            {trades.length === 0
-              ? 'Sin trades registrados. La regla se evaluará al registrar ganancias.'
-              : consistenciaOk
-                ? `Tu mejor día representa el ${Math.round(consistenciaPct)}% del total de ganancias ($${bestDayProfit.toFixed(2)}). Dentro del límite del ${limitePct}%.`
-                : `⚠️ Tu mejor día representa el ${Math.round(consistenciaPct)}% de tus ganancias totales ($${bestDayProfit.toFixed(2)}). Supera el límite del ${limitePct}%.`
-            }
-          </p>
-          <div style={styles.consistenciaInfo}>
-            <Info size={12} color="var(--text-secondary)" />
-            <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-              Mejor día de ganancia ≤ {limitePct}% del total acumulado
-            </span>
+
+          <div style={styles.guiaDivider} />
+
+          {/* Bloque 1: Próximo día ganador */}
+          <div style={styles.guiaBloque}>
+            <div style={styles.guiaIcono}>🎯</div>
+            <div>
+              <div style={styles.guiaBloqueTitle}>Próximo día ganador recomendado</div>
+              {consistenciaOk ? (
+                <div style={styles.guiaBloqueText}>
+                  Apuntá a ganar entre <strong style={{ color: '#30d158' }}>{fmt(minProximoDia)}</strong> y{' '}
+                  <strong style={{ color: '#30d158' }}>{fmt(maxProximoDia)}</strong> en tu próxima sesión.
+                  Eso mantiene tu mejor día dentro del límite del {limitePct}%.
+                </div>
+              ) : (
+                <div style={styles.guiaBloqueText}>
+                  Tu mejor día ({fmt(bestDayProfit)}) representa el {Math.round(consistenciaPct)}% del total.
+                  Necesitás acumular <strong style={{ color: '#ff9f0a' }}>{fmt(ganarAdicionalNecesario)}</strong> más
+                  en días distintos. Objetivos seguros: <strong>{fmt(minProximoDia)}–{fmt(maxProximoDia)}</strong> por sesión.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Bloque 2: Camino al retiro */}
+          <div style={styles.guiaBloque}>
+            <div style={styles.guiaIcono}>🏁</div>
+            <div>
+              <div style={styles.guiaBloqueTitle}>Camino al objetivo de retiro</div>
+              <div style={styles.guiaBloqueText}>
+                Te faltan <strong style={{ color: '#fff' }}>{fmt(faltaUsd)}</strong> para retirar
+                ({fmt(targetRetiroUsd)} · {targetRetiroPct}%) ·{' '}
+                {diasEstimadosRetiro
+                  ? <>Estimado: <strong style={{ color: '#0af' }}>~{diasEstimadosRetiro} sesiones ganadoras</strong> con días de {fmt(minProximoDia)}–{fmt(maxProximoDia)}.</>
+                  : 'No se puede estimar sin un objetivo de ganancia diaria.'}
+              </div>
+            </div>
+          </div>
+
+          {/* Bloque 3: Escenario de pérdida */}
+          <div style={styles.guiaBloque}>
+            <div style={styles.guiaIcono}>🛡️</div>
+            <div>
+              <div style={styles.guiaBloqueTitle}>Si el próximo trade es una pérdida</div>
+              <div style={styles.guiaBloqueText}>
+                Pérdida diaria máxima recomendada: <strong style={{ color: '#ff453a' }}>{fmt(perdidaRecomendadaMax)}</strong> (0.5% del cuenta).
+                Una pérdida similar a tus peores días ({fmt(worstDay)}) dejaría tu PnL en{' '}
+                <strong style={{ color: pnlTrasPerdida >= 0 ? '#30d158' : '#ff453a' }}>
+                  {pnlTrasPerdida >= 0 ? '+' : '-'}{fmt(pnlTrasPerdida)}
+                </strong>{' '}y tu progreso en {Math.round(progresoTrasPerdida)}%.
+              </div>
+            </div>
+          </div>
+
+          {/* Bloque 4: Estado de consistencia detallado */}
+          {!consistenciaOk && (
+            <div style={{ ...styles.guiaBloque, alignItems: 'flex-start' }}>
+              <div style={styles.guiaIcono}>📊</div>
+              <div>
+                <div style={styles.guiaBloqueTitle}>Para regularizar la consistencia</div>
+                <div style={styles.guiaBloqueText}>
+                  Con tu mejor día en {fmt(bestDayProfit)}, el total de ganancias debe llegar a al menos{' '}
+                  <strong style={{ color: '#ff9f0a' }}>{fmt(totalWinsNecesario)}</strong>.
+                  Actualmente estás en <strong>{fmt(totalWins)}</strong>. Necesitás{' '}
+                  <strong style={{ color: '#ff9f0a' }}>{fmt(ganarAdicionalNecesario)}</strong> más,
+                  distribuidos en múltiples sesiones sin superar {fmt(bestDayProfit)} en ningún día.
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      )}
+
+      {/* Placeholder si aún no hay trades */}
+      {account.regla_consistencia && trades.length === 0 && (
+        <div style={{ ...styles.guiaCard, borderColor: 'var(--border)', backgroundColor: 'var(--bg-secondary)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 20 }}>🧠</span>
+            <div>
+              <div style={styles.guiaTitulo}>Análisis de Gestión</div>
+              <div style={styles.guiaBloqueText}>Registrá tu primer trade para ver las recomendaciones personalizadas.</div>
+            </div>
           </div>
         </div>
       )}
@@ -262,6 +369,7 @@ const styles = {
     border: '1px solid var(--border)', borderRadius: '16px',
     overflow: 'hidden', marginBottom: '16px',
   },
+  gridCell: { padding: '16px 18px', backgroundColor: 'var(--bg-secondary)' },
   gridLabel: { fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' },
   gridValue: { fontSize: '20px', fontWeight: '700' },
   retiroCard: {
@@ -280,9 +388,6 @@ const styles = {
     border: '1px solid', borderRadius: '16px', padding: '16px',
     marginBottom: '24px', display: 'flex', flexDirection: 'column', gap: '8px',
   },
-  consistenciaHeader: { display: 'flex', alignItems: 'center', gap: '8px' },
-  consistenciaText: { fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.5', margin: 0 },
-  consistenciaInfo: { display: 'flex', alignItems: 'center', gap: '5px' },
   section: { marginBottom: '32px' },
   sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
   sectionTitle: { fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', letterSpacing: '0.5px' },
@@ -310,7 +415,25 @@ const styles = {
   tradeAsset: { fontSize: '15px', fontWeight: '600' },
   tradeDate: { fontSize: '12px', color: 'var(--text-secondary)' },
   tradePnl: { fontSize: '16px', fontWeight: '700' },
+
+  // ── Expert guide panel ──────────────────────────────────
+  guiaCard: {
+    border: '1px solid', borderRadius: '18px', padding: '18px 20px',
+    marginBottom: '24px', display: 'flex', flexDirection: 'column', gap: '14px',
+  },
+  guiaHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' },
+  guiaHeaderLeft: { display: 'flex', alignItems: 'flex-start', gap: '10px' },
+  guiaTitulo: { fontSize: '15px', fontWeight: '700', marginBottom: '2px' },
+  guiaSubtitulo: { fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.4' },
+  guiaBadge: {
+    fontSize: '11px', fontWeight: '700', padding: '4px 10px',
+    borderRadius: '20px', whiteSpace: 'nowrap', flexShrink: 0,
+    textTransform: 'uppercase', letterSpacing: '0.4px',
+  },
+  guiaDivider: { height: '1px', backgroundColor: 'rgba(255,255,255,0.06)', margin: '0 -4px' },
+  guiaBloque: { display: 'flex', alignItems: 'flex-start', gap: '10px' },
+  guiaIcono: { fontSize: '18px', flexShrink: 0, marginTop: '1px' },
+  guiaBloqueTitle: { fontSize: '13px', fontWeight: '600', marginBottom: '4px' },
+  guiaBloqueText: { fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.55' },
 };
 
-// Patch styles que requieren las celdas del grid
-const gridCellStyle = { padding: '16px', backgroundColor: 'var(--bg-secondary)' };
