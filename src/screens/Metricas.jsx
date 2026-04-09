@@ -75,6 +75,96 @@ export default function Metricas() {
     if (dd > maxDD) maxDD = dd;
   }
 
+  // 5. Win vs Loss Analysis — Risk/Reward detallado
+  const absAvgWin = Math.abs(avgWin);
+  const absAvgLoss = Math.abs(avgLoss);
+  const rrRatio = absAvgLoss > 0 ? absAvgWin / absAvgLoss : 0;
+  const maxBarValue = Math.max(absAvgWin, absAvgLoss, 1);
+  const winBarPct = (absAvgWin / maxBarValue) * 100;
+  const lossBarPct = (absAvgLoss / maxBarValue) * 100;
+
+  // Últimos N trades para tendencia reciente
+  const recentN = 10;
+  const recentTrades = trades.slice(-recentN);
+  const recentWins = recentTrades.filter(t => t.resultado === 'WIN');
+  const recentLosses = recentTrades.filter(t => t.resultado === 'LOSS');
+  const recentAvgWin = recentWins.length > 0 ? recentWins.reduce((a, t) => a + (t.pnl_usd || 0), 0) / recentWins.length : 0;
+  const recentAvgLoss = recentLosses.length > 0 ? recentLosses.reduce((a, t) => a + (t.pnl_usd || 0), 0) / recentLosses.length : 0;
+  const recentRR = Math.abs(recentAvgLoss) > 0 ? Math.abs(recentAvgWin) / Math.abs(recentAvgLoss) : 0;
+
+  // Mayor ganancia y mayor pérdida individuales
+  const biggestWin = wins.length > 0 ? Math.max(...wins.map(t => t.pnl_usd || 0)) : 0;
+  const biggestLoss = losses.length > 0 ? Math.min(...losses.map(t => t.pnl_usd || 0)) : 0;
+
+  // Recomendaciones inteligentes
+  const getWinLossRecommendations = () => {
+    const recs = [];
+    if (wins.length === 0 || losses.length === 0) {
+      return [{ icon: '📊', text: 'Necesitás al menos un trade ganador y uno perdedor para generar un análisis completo.' }];
+    }
+    // Patrón principal: ¿ganancias más chicas que pérdidas?
+    if (rrRatio < 0.8) {
+      recs.push({
+        icon: '🚨',
+        title: 'Estás cortando los trades ganadores demasiado rápido',
+        text: `En promedio ganás $${absAvgWin.toFixed(0)} pero perdés $${absAvgLoss.toFixed(0)} por trade. Estás arriesgando más de lo que dejás correr. Para ser rentable con un Win Rate de ${winRate}%, necesitás un R:R de al menos 1:1.`,
+        severity: 'danger'
+      });
+    } else if (rrRatio < 1.0) {
+      recs.push({
+        icon: '⚠️',
+        title: 'Tu ganancia promedio es menor que tu pérdida promedio',
+        text: `Ganás $${absAvgWin.toFixed(0)} vs perdés $${absAvgLoss.toFixed(0)}. Estás cerca del 1:1 pero todavía a favor de las pérdidas. Intentá mover tu TP un poco más lejos o tu SL un poco más cerca.`,
+        severity: 'warning'
+      });
+    } else if (rrRatio >= 1.5) {
+      recs.push({
+        icon: '🏆',
+        title: 'Excelente gestión de riesgo',
+        text: `Tu ganancia promedio ($${absAvgWin.toFixed(0)}) es ${rrRatio.toFixed(1)}x tu pérdida promedio ($${absAvgLoss.toFixed(0)}). Seguí manteniendo este ratio.`,
+        severity: 'success'
+      });
+    } else {
+      recs.push({
+        icon: '✅',
+        title: 'Ratio Win/Loss aceptable',
+        text: `Ganás $${absAvgWin.toFixed(0)} vs perdés $${absAvgLoss.toFixed(0)} — ratio ${rrRatio.toFixed(2)}:1. Buen punto de partida, pero si podés llevar el R:R a 1.5:1 o más, tu cuenta va a crecer más rápido.`,
+        severity: 'ok'
+      });
+    }
+    // Tendencia reciente
+    if (recentWins.length > 0 && recentLosses.length > 0) {
+      const trendBetter = recentRR > rrRatio;
+      const trendWorse = recentRR < rrRatio * 0.7;
+      if (trendWorse) {
+        recs.push({
+          icon: '📉',
+          title: 'Tu R:R está empeorando',
+          text: `En tus últimos ${recentN} trades el ratio bajó a ${recentRR.toFixed(2)}:1 (general: ${rrRatio.toFixed(2)}:1). Revisá si estás moviendo el SL o cerrando antes del TP.`,
+          severity: 'warning'
+        });
+      } else if (trendBetter) {
+        recs.push({
+          icon: '📈',
+          title: 'Tu R:R está mejorando',
+          text: `Últimos ${recentN} trades: ${recentRR.toFixed(2)}:1 vs general ${rrRatio.toFixed(2)}:1. Buen progreso, seguí así.`,
+          severity: 'success'
+        });
+      }
+    }
+    // Dato clave sobre la mayor ganancia vs mayor pérdida
+    if (Math.abs(biggestLoss) > biggestWin * 1.5 && biggestWin > 0) {
+      recs.push({
+        icon: '💡',
+        title: 'Tu peor pérdida es mucho mayor que tu mejor ganancia',
+        text: `Mayor pérdida: $${Math.abs(biggestLoss).toFixed(0)} vs Mayor ganancia: $${biggestWin.toFixed(0)}. Un solo trade malo puede borrar varias ganancias. Considerá poner un stop loss máximo fijo.`,
+        severity: 'danger'
+      });
+    }
+    return recs;
+  };
+  const winLossRecs = getWinLossRecommendations();
+
   // 3. Distribución por resultado para BarChart
   const distribution = [
     { label: 'WIN', count: wins.length, color: '#30d158' },
@@ -110,6 +200,87 @@ export default function Metricas() {
         <KPI label="Avg. Win" value={`+$${avgWin.toFixed(0)}`} color="#30d158" />
         <KPI label="Avg. Loss" value={`$${avgLoss.toFixed(0)}`} color="#ff453a" />
       </div>
+
+      {/* ── Panel Win vs Loss ── */}
+      {(wins.length > 0 || losses.length > 0) && (
+        <div style={{
+          ...styles.chartCard,
+          border: rrRatio < 0.8 ? '1px solid rgba(255,69,58,0.3)' : rrRatio < 1 ? '1px solid rgba(255,159,10,0.25)' : '1px solid rgba(48,209,88,0.2)',
+          backgroundColor: rrRatio < 0.8 ? 'rgba(255,69,58,0.04)' : rrRatio < 1 ? 'rgba(255,159,10,0.04)' : 'var(--bg-secondary)',
+        }}>
+          <div style={styles.wlHeader}>
+            <div>
+              <h3 style={{ fontSize: '16px', fontWeight: '700', marginBottom: '3px' }}>Ganancia vs Pérdida Promedio</h3>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                Ratio R:R actual: <strong style={{ color: rrRatio >= 1 ? '#30d158' : '#ff453a' }}>{rrRatio.toFixed(2)}:1</strong>
+                {' · '}{totalTrades} trades analizados
+              </span>
+            </div>
+            <div style={{
+              ...styles.wlBadge,
+              backgroundColor: rrRatio >= 1.5 ? 'rgba(48,209,88,0.15)' : rrRatio >= 1 ? 'rgba(48,209,88,0.1)' : rrRatio >= 0.8 ? 'rgba(255,159,10,0.15)' : 'rgba(255,69,58,0.15)',
+              color: rrRatio >= 1 ? '#30d158' : rrRatio >= 0.8 ? '#ff9f0a' : '#ff453a',
+            }}>
+              {rrRatio >= 1.5 ? 'Excelente' : rrRatio >= 1 ? 'Aceptable' : rrRatio >= 0.8 ? 'Mejorable' : 'Crítico'}
+            </div>
+          </div>
+
+          {/* Barras comparativas */}
+          <div style={styles.wlBarsWrap}>
+            <div style={styles.wlBarRow}>
+              <span style={styles.wlBarLabel}>Avg. Win</span>
+              <div style={styles.wlBarTrack}>
+                <div style={{ ...styles.wlBarFill, width: `${winBarPct}%`, backgroundColor: '#30d158' }} />
+              </div>
+              <span style={{ ...styles.wlBarValue, color: '#30d158' }}>+${absAvgWin.toFixed(0)}</span>
+            </div>
+            <div style={styles.wlBarRow}>
+              <span style={styles.wlBarLabel}>Avg. Loss</span>
+              <div style={styles.wlBarTrack}>
+                <div style={{ ...styles.wlBarFill, width: `${lossBarPct}%`, backgroundColor: '#ff453a' }} />
+              </div>
+              <span style={{ ...styles.wlBarValue, color: '#ff453a' }}>-${absAvgLoss.toFixed(0)}</span>
+            </div>
+          </div>
+
+          {/* KPIs inline */}
+          <div style={styles.wlKpiRow}>
+            <div style={styles.wlKpiItem}>
+              <span style={styles.wlKpiLabel}>Mayor ganancia</span>
+              <span style={{ ...styles.wlKpiValue, color: '#30d158' }}>+${biggestWin.toFixed(0)}</span>
+            </div>
+            <div style={{ width: '1px', backgroundColor: 'rgba(255,255,255,0.08)', alignSelf: 'stretch' }} />
+            <div style={styles.wlKpiItem}>
+              <span style={styles.wlKpiLabel}>Mayor pérdida</span>
+              <span style={{ ...styles.wlKpiValue, color: '#ff453a' }}>-${Math.abs(biggestLoss).toFixed(0)}</span>
+            </div>
+            <div style={{ width: '1px', backgroundColor: 'rgba(255,255,255,0.08)', alignSelf: 'stretch' }} />
+            <div style={styles.wlKpiItem}>
+              <span style={styles.wlKpiLabel}>R:R reciente ({recentN})</span>
+              <span style={{ ...styles.wlKpiValue, color: recentRR >= 1 ? '#30d158' : '#ff9f0a' }}>
+                {recentWins.length > 0 && recentLosses.length > 0 ? `${recentRR.toFixed(2)}:1` : '—'}
+              </span>
+            </div>
+          </div>
+
+          {/* Recomendaciones */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {winLossRecs.map((rec, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'flex-start', gap: '10px',
+                padding: '12px 14px', borderRadius: '12px',
+                backgroundColor: rec.severity === 'danger' ? 'rgba(255,69,58,0.08)' : rec.severity === 'warning' ? 'rgba(255,159,10,0.08)' : rec.severity === 'success' ? 'rgba(48,209,88,0.06)' : 'rgba(255,255,255,0.03)',
+              }}>
+                <span style={{ fontSize: '18px', flexShrink: 0, marginTop: '1px' }}>{rec.icon}</span>
+                <div>
+                  {rec.title && <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '3px' }}>{rec.title}</div>}
+                  <div style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>{rec.text}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Equity Curve */}
       <div style={styles.chartCard}>
@@ -232,4 +403,17 @@ const styles = {
   assetName: { fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', width: '70px', flexShrink: 0 },
   assetBarWrap: { flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '4px', height: '4px' },
   assetPnl: { fontSize: '13px', fontWeight: '600', flexShrink: 0, width: '60px', textAlign: 'right' },
+  // Win vs Loss panel
+  wlHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '18px' },
+  wlBadge: { fontSize: '11px', fontWeight: '700', padding: '4px 10px', borderRadius: '20px', whiteSpace: 'nowrap', flexShrink: 0, textTransform: 'uppercase', letterSpacing: '0.4px' },
+  wlBarsWrap: { display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' },
+  wlBarRow: { display: 'flex', alignItems: 'center', gap: '10px' },
+  wlBarLabel: { fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '500', width: '64px', flexShrink: 0 },
+  wlBarTrack: { flex: 1, height: '10px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '6px', overflow: 'hidden' },
+  wlBarFill: { height: '100%', borderRadius: '6px', transition: 'width 0.5s ease' },
+  wlBarValue: { fontSize: '15px', fontWeight: '700', width: '60px', textAlign: 'right', flexShrink: 0 },
+  wlKpiRow: { display: 'flex', gap: '0', marginBottom: '16px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '12px', padding: '12px 0' },
+  wlKpiItem: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' },
+  wlKpiLabel: { fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '500' },
+  wlKpiValue: { fontSize: '16px', fontWeight: '700' },
 };
