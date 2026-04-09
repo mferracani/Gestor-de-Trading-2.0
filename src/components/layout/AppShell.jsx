@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from 'react-router';
-import { Home, List, History, BarChart2 } from 'lucide-react';
+import { Home, List, History, BarChart2, Wallet } from 'lucide-react';
 import '../../styles/index.css';
 
 export default function AppShell() {
@@ -10,6 +10,7 @@ export default function AppShell() {
         <div style={styles.navGroup}>
           <NavItemDesktop to="/" icon={<Home size={20} />} label="Inicio" />
           <NavItemDesktop to="/challenges" icon={<List size={20} />} label="Challenges" />
+          <NavItemDesktop to="/fondeadas" icon={<Wallet size={20} />} label="Fondeadas" />
           <NavItemDesktop to="/historial" icon={<History size={20} />} label="Historial" />
           <NavItemDesktop to="/metricas" icon={<BarChart2 size={20} />} label="Métricas" />
         </div>
@@ -22,10 +23,11 @@ export default function AppShell() {
 
       {/* Navegación Inferior (Móvil) */}
       <nav className="mobile-only" style={styles.bottomNav}>
-        <NavItem to="/" icon={<Home size={24} />} label="Inicio" />
-        <NavItem to="/challenges" icon={<List size={24} />} label="Challenges" />
-        <NavItem to="/historial" icon={<History size={24} />} label="Historial" />
-        <NavItem to="/metricas" icon={<BarChart2 size={24} />} label="Métricas" />
+        <NavItem to="/" icon={<Home size={22} />} label="Inicio" />
+        <NavItem to="/challenges" icon={<List size={22} />} label="Challenges" />
+        <NavItem to="/fondeadas" icon={<Wallet size={22} />} label="Fondeadas" />
+        <NavItem to="/historial" icon={<History size={22} />} label="Historial" />
+        <NavItem to="/metricas" icon={<BarChart2 size={22} />} label="Métricas" />
       </nav>
     </div>
   );

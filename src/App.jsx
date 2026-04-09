@@ -7,6 +7,9 @@ import ChallengeDetail from './screens/ChallengeDetail';
 import TradeCreate from './screens/TradeCreate';
 import Historial from './screens/Historial';
 import Metricas from './screens/Metricas';
+import FundedAccountList from './screens/FundedAccountList';
+import FundedAccountDetail from './screens/FundedAccountDetail';
+import FundedAccountCreate from './screens/FundedAccountCreate';
 
 export default function App() {
   return (
@@ -23,6 +26,11 @@ export default function App() {
         
         <Route path="/historial" element={<Historial />} />
         <Route path="/metricas" element={<Metricas />} />
+
+        {/* Cuentas Fondeadas */}
+        <Route path="/fondeadas" element={<FundedAccountList />} />
+        <Route path="/fondeadas/nueva" element={<FundedAccountCreate />} />
+        <Route path="/fondeadas/:id" element={<FundedAccountDetail />} />
       </Route>
     </Routes>
   );
