@@ -168,8 +168,19 @@ export const useTradingStore = create((set) => ({
 
       const account = { id: accountSnap.id, ...accountSnap.data() };
       const finalPnl = Number(tradeData.pnl_usd || 0);
-      const newBalance = (account.balance_actual_usd || account.balance_inicial_usd || 0) + finalPnl;
+      const inicial = account.balance_inicial_usd || 0;
+      const newBalance = (account.balance_actual_usd || inicial) + finalPnl;
       const newPnl = (account.pnl_acumulado_usd || 0) + finalPnl;
+
+      // Check max loss
+      const maxLossAbs = account.max_loss_usd ? (inicial - account.max_loss_usd) : (inicial * 0.9);
+      let newEstado = account.estado || 'activo';
+      let stopTradingReason = null;
+
+      if (newBalance <= maxLossAbs) {
+        newEstado = 'quemada';
+        stopTradingReason = 'Cuenta Quemada';
+      }
 
       const batch = writeBatch(db);
 
@@ -188,10 +199,11 @@ export const useTradingStore = create((set) => ({
       batch.update(accountRef, {
         balance_actual_usd: newBalance,
         pnl_acumulado_usd: newPnl,
+        estado: newEstado
       });
 
       await batch.commit();
-      return { success: true };
+      return { success: true, reason: stopTradingReason };
     } catch (error) {
       console.error('Error registrando trade fondeada:', error);
       throw error;

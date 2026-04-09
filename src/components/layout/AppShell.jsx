@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from 'react-router';
-import { Home, List, History, BarChart2, Wallet } from 'lucide-react';
+import { Home, List, History, BarChart2, Wallet, Archive } from 'lucide-react';
 import '../../styles/index.css';
 
 export default function AppShell() {
@@ -11,6 +11,7 @@ export default function AppShell() {
           <NavItemDesktop to="/" icon={<Home size={20} />} label="Inicio" />
           <NavItemDesktop to="/challenges" icon={<List size={20} />} label="Challenges" />
           <NavItemDesktop to="/fondeadas" icon={<Wallet size={20} />} label="Fondeadas" />
+          <NavItemDesktop to="/archivadas" icon={<Archive size={20} />} label="Archivadas" />
           <NavItemDesktop to="/historial" icon={<History size={20} />} label="Historial" />
           <NavItemDesktop to="/metricas" icon={<BarChart2 size={20} />} label="Métricas" />
         </div>

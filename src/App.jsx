@@ -10,6 +10,7 @@ import Metricas from './screens/Metricas';
 import FundedAccountList from './screens/FundedAccountList';
 import FundedAccountDetail from './screens/FundedAccountDetail';
 import FundedAccountCreate from './screens/FundedAccountCreate';
+import ArchivedList from './screens/ArchivedList';
 
 export default function App() {
   return (
@@ -26,6 +27,7 @@ export default function App() {
         
         <Route path="/historial" element={<Historial />} />
         <Route path="/metricas" element={<Metricas />} />
+        <Route path="/archivadas" element={<ArchivedList />} />
 
         {/* Cuentas Fondeadas */}
         <Route path="/fondeadas" element={<FundedAccountList />} />
