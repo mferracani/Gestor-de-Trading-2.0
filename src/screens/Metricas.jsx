@@ -119,74 +119,139 @@ export default function Metricas() {
   const recentAvgLossPct = recentLosses.length > 0 ? recentLosses.reduce((a, t) => a + getTradeBalancePct(t), 0) / recentLosses.length : 0;
   const recentRR = Math.abs(recentAvgLossPct) > 0 ? Math.abs(recentAvgWinPct) / Math.abs(recentAvgLossPct) : 0;
 
-  // Recomendaciones inteligentes
-  const getWinLossRecommendations = () => {
+  // ── Punto de Equilibrio Dinámico ──────────────────────────────────────────
+  // Fórmula: Para ser rentable → WR × AvgWin > (1-WR) × AvgLoss
+  // Breakeven R:R = (1 - WR) / WR
+  // Breakeven WR = 1 / (1 + R:R)
+
+  const wrDecimal = winRate / 100;
+  const breakevenRR = wrDecimal > 0 ? (1 - wrDecimal) / wrDecimal : Infinity;
+  const breakevenWR = rrRatio > 0 ? (1 / (1 + rrRatio)) * 100 : 100;
+  const minAvgWinPctNeeded = absAvgLossPct > 0 && wrDecimal > 0
+    ? (absAvgLossPct * (1 - wrDecimal)) / wrDecimal
+    : 0;
+  const targetRR = 1.5; // Ideal del usuario: entre 1.1 y 2
+  const wrNeededForTargetRR = (1 / (1 + targetRR)) * 100;
+
+  // Margen de seguridad: cuán lejos está del breakeven
+  const rrMargin = rrRatio > 0 ? ((rrRatio - breakevenRR) / breakevenRR) * 100 : 0;
+  const isAboveBreakeven = rrRatio > breakevenRR;
+  const isInIdealZone = rrRatio >= 1.1 && rrRatio <= 2.0;
+
+  // WR reciente para detectar tendencia
+  const recentWR = recentTrades.length > 0
+    ? Math.round((recentWins.length / recentTrades.length) * 100)
+    : winRate;
+  const wrTrend = recentWR - winRate; // positivo = mejorando
+
+  // Recalcular mínimo necesario con WR reciente (para las recomendaciones adaptativas)
+  const recentWrDecimal = recentWR / 100;
+  const minAvgWinPctForRecentWR = absAvgLossPct > 0 && recentWrDecimal > 0
+    ? (absAvgLossPct * (1 - recentWrDecimal)) / recentWrDecimal
+    : 0;
+
+  // ── Recomendaciones Adaptativas ─────────────────────────────────────────
+  const getAdaptiveRecommendations = () => {
     const recs = [];
     if (wins.length === 0 || losses.length === 0) {
-      return [{ icon: '📊', text: 'Necesitás al menos un trade ganador y uno perdedor para generar un análisis completo.' }];
+      return [{ icon: '📊', text: 'Necesitás al menos un trade ganador y uno perdedor para generar un análisis de equilibrio.' }];
     }
-    // Patrón principal: ¿ganancias promedio más chicas que pérdidas promedio? (en %)
-    if (rrRatio < 0.8) {
+
+    // 1. Estado actual: ¿estás por encima o debajo del breakeven?
+    if (!isAboveBreakeven) {
       recs.push({
         icon: '🚨',
-        title: 'Estás cortando los trades ganadores demasiado rápido',
-        text: `En promedio ganás ${absAvgWinPct.toFixed(2)}% pero perdés ${absAvgLossPct.toFixed(2)}% del balance por trade. Estás arriesgando más de lo que dejás correr. Para ser rentable con un Win Rate de ${winRate}%, necesitás un R:R de al menos 1:1.`,
+        title: 'Estás por debajo del punto de equilibrio',
+        text: `Con un WR de ${winRate}%, necesitás un R:R mínimo de ${breakevenRR.toFixed(2)}:1 para no perder plata. Tu R:R actual es ${rrRatio.toFixed(2)}:1. Necesitás ganar al menos ${minAvgWinPctNeeded.toFixed(2)}% por trade ganador (hoy ganás ${absAvgWinPct.toFixed(2)}%).`,
         severity: 'danger'
       });
-    } else if (rrRatio < 1.0) {
+    } else if (rrMargin < 30) {
       recs.push({
         icon: '⚠️',
-        title: 'Tu ganancia promedio es menor que tu pérdida promedio',
-        text: `Ganás ${absAvgWinPct.toFixed(2)}% vs perdés ${absAvgLossPct.toFixed(2)}% del balance. Estás cerca del 1:1 pero todavía a favor de las pérdidas. Intentá mover tu TP un poco más lejos o tu SL un poco más cerca.`,
+        title: 'Estás rentable, pero muy cerca del límite',
+        text: `Tu R:R (${rrRatio.toFixed(2)}:1) supera al mínimo (${breakevenRR.toFixed(2)}:1) por solo ${rrMargin.toFixed(0)}%. Una mala racha puede hacerte caer debajo. Tu promedio de ganancia mínimo es ${minAvgWinPctNeeded.toFixed(2)}% y hoy estás en ${absAvgWinPct.toFixed(2)}%.`,
         severity: 'warning'
-      });
-    } else if (rrRatio >= 1.5) {
-      recs.push({
-        icon: '🏆',
-        title: 'Excelente gestión de riesgo',
-        text: `Tu ganancia promedio (${absAvgWinPct.toFixed(2)}%) es ${rrRatio.toFixed(1)}x tu pérdida promedio (${absAvgLossPct.toFixed(2)}%). Seguí manteniendo este ratio.`,
-        severity: 'success'
       });
     } else {
       recs.push({
-        icon: '✅',
-        title: 'Ratio Win/Loss aceptable',
-        text: `Ganás ${absAvgWinPct.toFixed(2)}% vs perdés ${absAvgLossPct.toFixed(2)}% — ratio ${rrRatio.toFixed(2)}:1. Buen punto de partida, pero si podés llevar el R:R a 1.5:1 o más, tu cuenta va a crecer más rápido.`,
-        severity: 'ok'
+        icon: '🏆',
+        title: 'Estás por encima del equilibrio',
+        text: `Tu R:R (${rrRatio.toFixed(2)}:1) supera al mínimo (${breakevenRR.toFixed(2)}:1) por ${rrMargin.toFixed(0)}%. Tenés margen. Con tu WR de ${winRate}%, solo necesitás ganar ${minAvgWinPctNeeded.toFixed(2)}% por trade ganador y estás ganando ${absAvgWinPct.toFixed(2)}%.`,
+        severity: 'success'
       });
     }
-    // Tendencia reciente
-    if (recentWins.length > 0 && recentLosses.length > 0) {
-      const trendBetter = recentRR > rrRatio;
-      const trendWorse = recentRR < rrRatio * 0.7;
-      if (trendWorse) {
-        recs.push({
-          icon: '📉',
-          title: 'Tu R:R está empeorando',
-          text: `En tus últimos ${recentN} trades el ratio bajó a ${recentRR.toFixed(2)}:1 (general: ${rrRatio.toFixed(2)}:1). Revisá si estás moviendo el SL o cerrando antes del TP.`,
-          severity: 'warning'
-        });
-      } else if (trendBetter) {
+
+    // 2. ¿Está en la zona ideal de R:R (1.1 - 2.0)?
+    if (isInIdealZone) {
+      recs.push({
+        icon: '🎯',
+        title: 'R:R en zona ideal (1.1 – 2.0)',
+        text: `Tu ratio ${rrRatio.toFixed(2)}:1 está en el rango óptimo. Con este R:R necesitás un WR mínimo de ${breakevenWR.toFixed(0)}% y tenés ${winRate}%. Seguí operando así.`,
+        severity: 'success'
+      });
+    } else if (rrRatio > 2.0) {
+      recs.push({
+        icon: '📐',
+        title: 'R:R por encima de tu zona objetivo',
+        text: `Tu R:R de ${rrRatio.toFixed(2)}:1 está por encima de tu rango ideal (1.1 – 2.0). Esto puede significar que estás esperando demasiado para cerrar ganadores, lo cual puede bajar tu WR. Evaluá si podés cerrar un poco antes y mantener un WR más alto.`,
+        severity: 'ok'
+      });
+    } else if (rrRatio < 1.1 && rrRatio > 0) {
+      const targetAvgWin = absAvgLossPct * 1.1;
+      recs.push({
+        icon: '📐',
+        title: 'R:R por debajo de tu zona objetivo',
+        text: `Tu R:R de ${rrRatio.toFixed(2)}:1 está debajo del rango 1.1 – 2.0. Con tu pérdida promedio de ${absAvgLossPct.toFixed(2)}%, tu ganancia promedio debería ser al menos ${targetAvgWin.toFixed(2)}% para entrar en zona. Hoy ganás ${absAvgWinPct.toFixed(2)}%.`,
+        severity: 'warning'
+      });
+    }
+
+    // 3. Tendencia de WR: ¿subiendo o bajando?
+    if (recentTrades.length >= 5) {
+      if (wrTrend >= 10) {
         recs.push({
           icon: '📈',
-          title: 'Tu R:R está mejorando',
-          text: `Últimos ${recentN} trades: ${recentRR.toFixed(2)}:1 vs general ${rrRatio.toFixed(2)}:1. Buen progreso, seguí así.`,
+          title: `Tu Win Rate está subiendo (${recentWR}% reciente vs ${winRate}% general)`,
+          text: `Con este WR de ${recentWR}%, tu ganancia mínima necesaria baja a ${minAvgWinPctForRecentWR.toFixed(2)}% por ganador. Tenés más margen para ajustar tus TPs si querés.`,
           severity: 'success'
+        });
+      } else if (wrTrend <= -10) {
+        recs.push({
+          icon: '📉',
+          title: `Tu Win Rate está bajando (${recentWR}% reciente vs ${winRate}% general)`,
+          text: `Si tu WR se estabiliza en ${recentWR}%, vas a necesitar ganar al menos ${minAvgWinPctForRecentWR.toFixed(2)}% por trade ganador (hoy ganás ${absAvgWinPct.toFixed(2)}%). ${absAvgWinPct >= minAvgWinPctForRecentWR ? 'Por ahora tu promedio de ganancia lo compensa.' : 'Tu promedio de ganancia actual no lo compensa — necesitás mejorar tu R:R o frenar la caída del WR.'}`,
+          severity: absAvgWinPct >= minAvgWinPctForRecentWR ? 'warning' : 'danger'
+        });
+      } else if (wrTrend >= 5) {
+        recs.push({
+          icon: '📊',
+          title: `Win Rate estable-mejorando (${recentWR}% reciente)`,
+          text: `Tu WR se mantiene cerca del ${winRate}%. Con esta consistencia y tu R:R de ${rrRatio.toFixed(2)}:1, necesitás ${minAvgWinPctNeeded.toFixed(2)}% de ganancia por ganador. Estás en ${absAvgWinPct.toFixed(2)}%.`,
+          severity: 'ok'
         });
       }
     }
-    // Dato clave: si la pérdida promedio % es mucho mayor que la ganancia promedio %
-    if (absAvgLossPct > absAvgWinPct * 2 && absAvgWinPct > 0) {
+
+    // 4. Diagnóstico cruzado: promedios vs WR
+    if (absAvgLossPct > absAvgWinPct && winRate < 60) {
       recs.push({
-        icon: '💡',
-        title: 'Tus pérdidas promedio duplican a tus ganancias',
-        text: `Perdés en promedio ${absAvgLossPct.toFixed(2)}% del balance vs ganás ${absAvgWinPct.toFixed(2)}%. Aunque tengas buen Win Rate, pocas pérdidas grandes pueden borrar muchas ganancias chicas. Considerá un stop loss máximo fijo.`,
+        icon: '🔴',
+        title: 'Combinación peligrosa: WR bajo + pérdidas mayores que ganancias',
+        text: `Perdés ${absAvgLossPct.toFixed(2)}% en promedio pero ganás solo ${absAvgWinPct.toFixed(2)}%, y tu WR es ${winRate}%. Necesitás o subir tu ganancia promedio a al menos ${minAvgWinPctNeeded.toFixed(2)}%, o mejorar tu WR por encima de ${breakevenWR.toFixed(0)}%.`,
         severity: 'danger'
       });
+    } else if (absAvgWinPct < absAvgLossPct * 0.5 && winRate >= 60) {
+      recs.push({
+        icon: '💡',
+        title: 'WR alto pero ganancias muy chicas respecto a pérdidas',
+        text: `Ganás ${absAvgWinPct.toFixed(2)}% en promedio vs perdés ${absAvgLossPct.toFixed(2)}%. Tu WR de ${winRate}% te salva, pero pocas pérdidas grandes pueden borrar muchas ganancias chicas. Intentá que tu ganancia promedio sea al menos ${(absAvgLossPct * 0.8).toFixed(2)}%.`,
+        severity: 'warning'
+      });
     }
+
     return recs;
   };
-  const winLossRecs = getWinLossRecommendations();
+  const adaptiveRecs = getAdaptiveRecommendations();
 
   // 3. Distribución por resultado para BarChart
   const distribution = [
@@ -266,16 +331,47 @@ export default function Metricas() {
             </div>
           </div>
 
-          {/* KPIs inline — promedios % y R:R reciente */}
+          {/* Punto de Equilibrio — KPIs dinámicos */}
+          <div style={{ marginBottom: '12px' }}>
+            <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              📍 Tu Punto de Equilibrio
+            </div>
+            <div style={styles.wlKpiRow}>
+              <div style={styles.wlKpiItem}>
+                <span style={styles.wlKpiLabel}>R:R mínimo</span>
+                <span style={{ ...styles.wlKpiValue, color: rrRatio >= breakevenRR ? '#30d158' : '#ff453a' }}>
+                  {breakevenRR === Infinity ? '—' : `${breakevenRR.toFixed(2)}:1`}
+                </span>
+              </div>
+              <div style={{ width: '1px', backgroundColor: 'rgba(255,255,255,0.08)', alignSelf: 'stretch' }} />
+              <div style={styles.wlKpiItem}>
+                <span style={styles.wlKpiLabel}>WR mínimo</span>
+                <span style={{ ...styles.wlKpiValue, color: winRate >= breakevenWR ? '#30d158' : '#ff453a' }}>
+                  {`${breakevenWR.toFixed(0)}%`}
+                </span>
+              </div>
+              <div style={{ width: '1px', backgroundColor: 'rgba(255,255,255,0.08)', alignSelf: 'stretch' }} />
+              <div style={styles.wlKpiItem}>
+                <span style={styles.wlKpiLabel}>Gan. mín. necesaria</span>
+                <span style={{ ...styles.wlKpiValue, color: absAvgWinPct >= minAvgWinPctNeeded ? '#30d158' : '#ff453a' }}>
+                  {`${minAvgWinPctNeeded.toFixed(2)}%`}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* WR reciente vs general */}
           <div style={styles.wlKpiRow}>
             <div style={styles.wlKpiItem}>
-              <span style={styles.wlKpiLabel}>Prom. ganancia</span>
-              <span style={{ ...styles.wlKpiValue, color: '#30d158' }}>+{absAvgWinPct.toFixed(2)}%</span>
+              <span style={styles.wlKpiLabel}>WR general</span>
+              <span style={{ ...styles.wlKpiValue, color: 'var(--text-primary)' }}>{winRate}%</span>
             </div>
             <div style={{ width: '1px', backgroundColor: 'rgba(255,255,255,0.08)', alignSelf: 'stretch' }} />
             <div style={styles.wlKpiItem}>
-              <span style={styles.wlKpiLabel}>Prom. pérdida</span>
-              <span style={{ ...styles.wlKpiValue, color: '#ff453a' }}>-{absAvgLossPct.toFixed(2)}%</span>
+              <span style={styles.wlKpiLabel}>WR reciente ({recentN})</span>
+              <span style={{ ...styles.wlKpiValue, color: recentWR >= winRate ? '#30d158' : '#ff9f0a' }}>
+                {recentTrades.length >= 3 ? `${recentWR}%` : '—'}
+              </span>
             </div>
             <div style={{ width: '1px', backgroundColor: 'rgba(255,255,255,0.08)', alignSelf: 'stretch' }} />
             <div style={styles.wlKpiItem}>
@@ -286,9 +382,9 @@ export default function Metricas() {
             </div>
           </div>
 
-          {/* Recomendaciones */}
+          {/* Recomendaciones Adaptativas */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {winLossRecs.map((rec, i) => (
+            {adaptiveRecs.map((rec, i) => (
               <div key={i} style={{
                 display: 'flex', alignItems: 'flex-start', gap: '10px',
                 padding: '12px 14px', borderRadius: '12px',
