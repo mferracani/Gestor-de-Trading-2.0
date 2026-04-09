@@ -95,30 +95,29 @@ export default function Metricas() {
     if (dd > maxDD) maxDD = dd;
   }
 
-  // 5. Win vs Loss Analysis — Risk/Reward detallado
-  const absAvgWin = Math.abs(avgWin);
-  const absAvgLoss = Math.abs(avgLoss);
-  const rrRatio = absAvgLoss > 0 ? absAvgWin / absAvgLoss : 0;
-  const maxBarValue = Math.max(absAvgWin, absAvgLoss, 1);
-  const winBarPct = (absAvgWin / maxBarValue) * 100;
-  const lossBarPct = (absAvgLoss / maxBarValue) * 100;
-
-  // Últimos N trades para tendencia reciente
-  const recentN = 10;
-  const recentTrades = trades.slice(-recentN);
-  const recentWins = recentTrades.filter(t => t.resultado === 'WIN');
-  const recentLosses = recentTrades.filter(t => t.resultado === 'LOSS');
-  const recentAvgWin = recentWins.length > 0 ? recentWins.reduce((a, t) => a + (t.pnl_usd || 0), 0) / recentWins.length : 0;
-  const recentAvgLoss = recentLosses.length > 0 ? recentLosses.reduce((a, t) => a + (t.pnl_usd || 0), 0) / recentLosses.length : 0;
-  const recentRR = Math.abs(recentAvgLoss) > 0 ? Math.abs(recentAvgWin) / Math.abs(recentAvgLoss) : 0;
-
-  // Mayor ganancia y mayor pérdida individuales — en porcentaje del balance inicial de la cuenta
+  // 5. Win vs Loss Analysis — Promedios en % del balance de cada cuenta
   const getTradeBalancePct = (t) => {
     const bal = accountsMap[t.account_id] || 10000;
     return ((t.pnl_usd || 0) / bal) * 100;
   };
-  const biggestWinPct = wins.length > 0 ? Math.max(...wins.map(t => getTradeBalancePct(t))) : 0;
-  const biggestLossPct = losses.length > 0 ? Math.min(...losses.map(t => getTradeBalancePct(t))) : 0;
+
+  const avgWinPct = wins.length > 0 ? wins.reduce((a, t) => a + getTradeBalancePct(t), 0) / wins.length : 0;
+  const avgLossPct = losses.length > 0 ? losses.reduce((a, t) => a + getTradeBalancePct(t), 0) / losses.length : 0;
+  const absAvgWinPct = Math.abs(avgWinPct);
+  const absAvgLossPct = Math.abs(avgLossPct);
+  const rrRatio = absAvgLossPct > 0 ? absAvgWinPct / absAvgLossPct : 0;
+  const maxBarValue = Math.max(absAvgWinPct, absAvgLossPct, 0.01);
+  const winBarPct = (absAvgWinPct / maxBarValue) * 100;
+  const lossBarPct = (absAvgLossPct / maxBarValue) * 100;
+
+  // Últimos N trades para tendencia reciente (también en %)
+  const recentN = 10;
+  const recentTrades = trades.slice(-recentN);
+  const recentWins = recentTrades.filter(t => t.resultado === 'WIN');
+  const recentLosses = recentTrades.filter(t => t.resultado === 'LOSS');
+  const recentAvgWinPct = recentWins.length > 0 ? recentWins.reduce((a, t) => a + getTradeBalancePct(t), 0) / recentWins.length : 0;
+  const recentAvgLossPct = recentLosses.length > 0 ? recentLosses.reduce((a, t) => a + getTradeBalancePct(t), 0) / recentLosses.length : 0;
+  const recentRR = Math.abs(recentAvgLossPct) > 0 ? Math.abs(recentAvgWinPct) / Math.abs(recentAvgLossPct) : 0;
 
   // Recomendaciones inteligentes
   const getWinLossRecommendations = () => {
@@ -126,33 +125,33 @@ export default function Metricas() {
     if (wins.length === 0 || losses.length === 0) {
       return [{ icon: '📊', text: 'Necesitás al menos un trade ganador y uno perdedor para generar un análisis completo.' }];
     }
-    // Patrón principal: ¿ganancias más chicas que pérdidas?
+    // Patrón principal: ¿ganancias promedio más chicas que pérdidas promedio? (en %)
     if (rrRatio < 0.8) {
       recs.push({
         icon: '🚨',
         title: 'Estás cortando los trades ganadores demasiado rápido',
-        text: `En promedio ganás $${absAvgWin.toFixed(0)} pero perdés $${absAvgLoss.toFixed(0)} por trade. Estás arriesgando más de lo que dejás correr. Para ser rentable con un Win Rate de ${winRate}%, necesitás un R:R de al menos 1:1.`,
+        text: `En promedio ganás ${absAvgWinPct.toFixed(2)}% pero perdés ${absAvgLossPct.toFixed(2)}% del balance por trade. Estás arriesgando más de lo que dejás correr. Para ser rentable con un Win Rate de ${winRate}%, necesitás un R:R de al menos 1:1.`,
         severity: 'danger'
       });
     } else if (rrRatio < 1.0) {
       recs.push({
         icon: '⚠️',
         title: 'Tu ganancia promedio es menor que tu pérdida promedio',
-        text: `Ganás $${absAvgWin.toFixed(0)} vs perdés $${absAvgLoss.toFixed(0)}. Estás cerca del 1:1 pero todavía a favor de las pérdidas. Intentá mover tu TP un poco más lejos o tu SL un poco más cerca.`,
+        text: `Ganás ${absAvgWinPct.toFixed(2)}% vs perdés ${absAvgLossPct.toFixed(2)}% del balance. Estás cerca del 1:1 pero todavía a favor de las pérdidas. Intentá mover tu TP un poco más lejos o tu SL un poco más cerca.`,
         severity: 'warning'
       });
     } else if (rrRatio >= 1.5) {
       recs.push({
         icon: '🏆',
         title: 'Excelente gestión de riesgo',
-        text: `Tu ganancia promedio ($${absAvgWin.toFixed(0)}) es ${rrRatio.toFixed(1)}x tu pérdida promedio ($${absAvgLoss.toFixed(0)}). Seguí manteniendo este ratio.`,
+        text: `Tu ganancia promedio (${absAvgWinPct.toFixed(2)}%) es ${rrRatio.toFixed(1)}x tu pérdida promedio (${absAvgLossPct.toFixed(2)}%). Seguí manteniendo este ratio.`,
         severity: 'success'
       });
     } else {
       recs.push({
         icon: '✅',
         title: 'Ratio Win/Loss aceptable',
-        text: `Ganás $${absAvgWin.toFixed(0)} vs perdés $${absAvgLoss.toFixed(0)} — ratio ${rrRatio.toFixed(2)}:1. Buen punto de partida, pero si podés llevar el R:R a 1.5:1 o más, tu cuenta va a crecer más rápido.`,
+        text: `Ganás ${absAvgWinPct.toFixed(2)}% vs perdés ${absAvgLossPct.toFixed(2)}% — ratio ${rrRatio.toFixed(2)}:1. Buen punto de partida, pero si podés llevar el R:R a 1.5:1 o más, tu cuenta va a crecer más rápido.`,
         severity: 'ok'
       });
     }
@@ -176,12 +175,12 @@ export default function Metricas() {
         });
       }
     }
-    // Dato clave sobre la mayor ganancia vs mayor pérdida (en porcentaje)
-    if (Math.abs(biggestLossPct) > biggestWinPct * 1.5 && biggestWinPct > 0) {
+    // Dato clave: si la pérdida promedio % es mucho mayor que la ganancia promedio %
+    if (absAvgLossPct > absAvgWinPct * 2 && absAvgWinPct > 0) {
       recs.push({
         icon: '💡',
-        title: 'Tu peor pérdida es mucho mayor que tu mejor ganancia',
-        text: `Mayor pérdida: ${Math.abs(biggestLossPct).toFixed(2)}% vs Mayor ganancia: ${biggestWinPct.toFixed(2)}%. Un solo trade malo puede borrar varias ganancias. Considerá poner un stop loss máximo fijo.`,
+        title: 'Tus pérdidas promedio duplican a tus ganancias',
+        text: `Perdés en promedio ${absAvgLossPct.toFixed(2)}% del balance vs ganás ${absAvgWinPct.toFixed(2)}%. Aunque tengas buen Win Rate, pocas pérdidas grandes pueden borrar muchas ganancias chicas. Considerá un stop loss máximo fijo.`,
         severity: 'danger'
       });
     }
@@ -249,34 +248,34 @@ export default function Metricas() {
             </div>
           </div>
 
-          {/* Barras comparativas */}
+          {/* Barras comparativas — promedios en % */}
           <div style={styles.wlBarsWrap}>
             <div style={styles.wlBarRow}>
               <span style={styles.wlBarLabel}>Avg. Win</span>
               <div style={styles.wlBarTrack}>
                 <div style={{ ...styles.wlBarFill, width: `${winBarPct}%`, backgroundColor: '#30d158' }} />
               </div>
-              <span style={{ ...styles.wlBarValue, color: '#30d158' }}>+${absAvgWin.toFixed(0)}</span>
+              <span style={{ ...styles.wlBarValue, color: '#30d158' }}>+{absAvgWinPct.toFixed(2)}%</span>
             </div>
             <div style={styles.wlBarRow}>
               <span style={styles.wlBarLabel}>Avg. Loss</span>
               <div style={styles.wlBarTrack}>
                 <div style={{ ...styles.wlBarFill, width: `${lossBarPct}%`, backgroundColor: '#ff453a' }} />
               </div>
-              <span style={{ ...styles.wlBarValue, color: '#ff453a' }}>-${absAvgLoss.toFixed(0)}</span>
+              <span style={{ ...styles.wlBarValue, color: '#ff453a' }}>-{absAvgLossPct.toFixed(2)}%</span>
             </div>
           </div>
 
-          {/* KPIs inline */}
+          {/* KPIs inline — promedios % y R:R reciente */}
           <div style={styles.wlKpiRow}>
             <div style={styles.wlKpiItem}>
-              <span style={styles.wlKpiLabel}>Mayor ganancia</span>
-              <span style={{ ...styles.wlKpiValue, color: '#30d158' }}>+{biggestWinPct.toFixed(2)}%</span>
+              <span style={styles.wlKpiLabel}>Prom. ganancia</span>
+              <span style={{ ...styles.wlKpiValue, color: '#30d158' }}>+{absAvgWinPct.toFixed(2)}%</span>
             </div>
             <div style={{ width: '1px', backgroundColor: 'rgba(255,255,255,0.08)', alignSelf: 'stretch' }} />
             <div style={styles.wlKpiItem}>
-              <span style={styles.wlKpiLabel}>Mayor pérdida</span>
-              <span style={{ ...styles.wlKpiValue, color: '#ff453a' }}>-{Math.abs(biggestLossPct).toFixed(2)}%</span>
+              <span style={styles.wlKpiLabel}>Prom. pérdida</span>
+              <span style={{ ...styles.wlKpiValue, color: '#ff453a' }}>-{absAvgLossPct.toFixed(2)}%</span>
             </div>
             <div style={{ width: '1px', backgroundColor: 'rgba(255,255,255,0.08)', alignSelf: 'stretch' }} />
             <div style={styles.wlKpiItem}>
@@ -435,7 +434,7 @@ const styles = {
   wlBarLabel: { fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '500', width: '64px', flexShrink: 0 },
   wlBarTrack: { flex: 1, height: '10px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '6px', overflow: 'hidden' },
   wlBarFill: { height: '100%', borderRadius: '6px', transition: 'width 0.5s ease' },
-  wlBarValue: { fontSize: '15px', fontWeight: '700', width: '60px', textAlign: 'right', flexShrink: 0 },
+  wlBarValue: { fontSize: '15px', fontWeight: '700', width: '76px', textAlign: 'right', flexShrink: 0 },
   wlKpiRow: { display: 'flex', gap: '0', marginBottom: '16px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '12px', padding: '12px 0' },
   wlKpiItem: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' },
   wlKpiLabel: { fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '500' },
