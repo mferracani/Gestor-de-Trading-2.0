@@ -15,6 +15,7 @@ export default function FundedAccountCreate() {
     balance_inicial_usd: '',
     objetivo_retiro_pct: 2,
     regla_consistencia: true,
+    consistencia_pct: 40,
     notas: '',
   });
   const [saving, setSaving] = useState(false);
@@ -37,6 +38,7 @@ export default function FundedAccountCreate() {
         pnl_acumulado_usd: 0,
         objetivo_retiro_pct: parseFloat(form.objetivo_retiro_pct) || 2,
         regla_consistencia: form.regla_consistencia,
+        consistencia_pct: form.regla_consistencia ? (parseFloat(form.consistencia_pct) || 40) : null,
         notas: form.notas.trim(),
         estado: 'activo',
         user_id: 'user_test_123',
@@ -128,7 +130,7 @@ export default function FundedAccountCreate() {
         <div style={styles.toggleRow}>
           <div>
             <div style={styles.toggleLabel}>Regla de Consistencia</div>
-            <div style={styles.toggleSubLabel}>Ningún trade puede superar el 30% del total de ganancias</div>
+            <div style={styles.toggleSubLabel}>El mejor día no puede superar X% del total de ganancias</div>
           </div>
           <button
             style={{
@@ -143,6 +145,37 @@ export default function FundedAccountCreate() {
             }} />
           </button>
         </div>
+
+        {/* Porcentaje de consistencia (visible solo si está activa) */}
+        {form.regla_consistencia && (
+          <div style={styles.field}>
+            <label style={styles.label}>Límite de consistencia (%)</label>
+            <p style={styles.fieldHint}>El mejor día de ganancia no puede superar este % del total acumulado.</p>
+            <div style={styles.pctRow}>
+              {[30, 40, 50].map(p => (
+                <button
+                  key={p}
+                  style={{
+                    ...styles.pctBtn,
+                    backgroundColor: form.consistencia_pct == p ? 'var(--accent-blue)' : 'var(--bg-secondary)',
+                    color: form.consistencia_pct == p ? '#fff' : 'var(--text-primary)',
+                    border: form.consistencia_pct == p ? 'none' : '1px solid var(--border)',
+                  }}
+                  onClick={() => handleChange('consistencia_pct', p)}
+                >
+                  {p}%
+                </button>
+              ))}
+              <input
+                style={{ ...styles.input, flex: 1 }}
+                type="number"
+                placeholder="Custom %"
+                value={[30, 40, 50].includes(Number(form.consistencia_pct)) ? '' : form.consistencia_pct}
+                onChange={e => handleChange('consistencia_pct', e.target.value)}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Notas */}
         <div style={styles.field}>
@@ -178,6 +211,7 @@ const styles = {
   form: { display: 'flex', flexDirection: 'column', gap: '20px' },
   field: { display: 'flex', flexDirection: 'column', gap: '8px' },
   label: { fontSize: '14px', fontWeight: '600', color: 'var(--text-secondary)' },
+  fieldHint: { fontSize: '12px', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' },
   input: {
     backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)',
     borderRadius: '14px', padding: '14px 16px', fontSize: '16px',

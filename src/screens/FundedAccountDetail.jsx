@@ -60,12 +60,19 @@ export default function FundedAccountDetail() {
   const progresoPct = Math.min(100, Math.max(0, (pnl / targetRetiroUsd) * 100));
   const isLogrado = faltaUsd <= 0 && pnl > 0;
 
-  // Regla de consistencia: la ganancia de un solo día/trade no debe superar el 30% del total de ganancias
-  const wins = trades.filter(t => t.pnl_usd > 0);
-  const totalWins = wins.reduce((s, t) => s + (t.pnl_usd || 0), 0);
-  const maxWin = wins.length > 0 ? Math.max(...wins.map(t => t.pnl_usd || 0)) : 0;
-  const consistenciaPct = totalWins > 0 ? (maxWin / totalWins) * 100 : 0;
-  const consistenciaOk = account.regla_consistencia ? consistenciaPct <= 30 : true;
+  // Regla de consistencia: agrupamos trades por día y comparamos el mejor día vs total de ganancias
+  // Igual a la lógica del broker: "Best Trading Day Profit" no puede superar X% del total
+  const limitePct = account.consistencia_pct || 40; // Usa el % guardado en la cuenta (default 40)
+  const tradesByDay = trades.reduce((acc, t) => {
+    const day = (t.fecha || '').slice(0, 10); // 'YYYY-MM-DD'
+    acc[day] = (acc[day] || 0) + (t.pnl_usd || 0);
+    return acc;
+  }, {});
+  const dailyPnls = Object.values(tradesByDay);
+  const totalWins = dailyPnls.filter(d => d > 0).reduce((s, d) => s + d, 0);
+  const bestDayProfit = dailyPnls.length > 0 ? Math.max(0, ...dailyPnls) : 0;
+  const consistenciaPct = totalWins > 0 ? (bestDayProfit / totalWins) * 100 : 0;
+  const consistenciaOk = account.regla_consistencia ? consistenciaPct <= limitePct : true;
 
   const winCount = trades.filter(t => t.resultado === 'WIN').length;
   const lossCount = trades.filter(t => t.resultado === 'LOSS').length;
@@ -174,14 +181,14 @@ export default function FundedAccountDetail() {
             {trades.length === 0
               ? 'Sin trades registrados. La regla se evaluará al registrar ganancias.'
               : consistenciaOk
-                ? `Tu trade más grande representa el ${Math.round(consistenciaPct)}% del total de ganancias. Dentro del límite del 30%.`
-                : `⚠️ Tu trade más grande representa el ${Math.round(consistenciaPct)}% de tus ganancias totales. Supera el límite del 30%.`
+                ? `Tu mejor día representa el ${Math.round(consistenciaPct)}% del total de ganancias ($${bestDayProfit.toFixed(2)}). Dentro del límite del ${limitePct}%.`
+                : `⚠️ Tu mejor día representa el ${Math.round(consistenciaPct)}% de tus ganancias totales ($${bestDayProfit.toFixed(2)}). Supera el límite del ${limitePct}%.`
             }
           </p>
           <div style={styles.consistenciaInfo}>
             <Info size={12} color="var(--text-secondary)" />
             <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-              Ningún trade puede superar el 30% del total de ganancias
+              Mejor día de ganancia ≤ {limitePct}% del total acumulado
             </span>
           </div>
         </div>
