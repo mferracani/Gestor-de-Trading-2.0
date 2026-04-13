@@ -103,34 +103,35 @@ export const useTradingStore = create((set) => ({
         fecha: new Date().toISOString()
       });
 
-      // 2. Determinar Rotación (Si perdió y sigue viva, o si murió, rotamos)
-      // Si el estado es quemada/aprobada, hay que rotar a la fuerza.
-      // Si el trade fue LOSS y no murió aún, rotamos a la siguiente.
-      let isActive = account.es_cuenta_activa ?? true; // Si es vieja, asumimos que era la activa porque nos dejó operar.
+      // 2. Determinar Rotación
+      // Solo rotamos si la cuenta actual ES la activa designada.
+      // Si se carga un trade en una cuenta que no es la activa (acceso directo al detalle),
+      // solo actualizamos balance/estado sin tocar es_cuenta_activa de ninguna cuenta.
+      const isCurrentlyActive = account.es_cuenta_activa === true;
       let nextActiveAccountId = null;
+      let newIsActive = isCurrentlyActive; // por defecto mantenemos el estado actual
 
-      const needsRotation = (tradeData.resultado === 'LOSS' || newEstado === 'quemada' || newEstado === 'aprobada');
+      const needsRotation = isCurrentlyActive &&
+        (tradeData.resultado === 'LOSS' || newEstado === 'quemada' || newEstado === 'aprobada');
 
-      if (needsRotation && isActive) {
-        // Encontrar siguiente
+      if (needsRotation) {
+        // Encontrar la siguiente cuenta operativa
         const rotActiveAccounts = accounts.filter(a => a.estado === 'activo' || a.estado === 'danger');
         rotActiveAccounts.sort((a, b) => a.orden_rotacion - b.orden_rotacion);
         
         let currentIndex = rotActiveAccounts.findIndex(a => a.id === account.id);
         if (currentIndex === -1) currentIndex = 0; // fallback
         
-        // Iterar para encontrar la siguiente que pueda operarse (debe estar en 'activo' o a lo sumo en 'danger' si la persona insiste)
-        // Preferimos una cuenta que no sea estemos rotando DE ella.
         let nextIndex = (currentIndex + 1) % rotActiveAccounts.length;
         let candidate = rotActiveAccounts[nextIndex];
         
-        // Evitamos volver a nosotros mismos si es la unica (en tal caso se queda, pero si se quemó se va)
         if (candidate && candidate.id !== account.id) {
            nextActiveAccountId = candidate.id;
-           isActive = false; // Nos quitamos el active
+           newIsActive = false; // Cedemos el estado activo a la siguiente
         } else if (newEstado === 'quemada' || newEstado === 'aprobada') {
-           isActive = false; // Nos la quitamos, no hay nadie mas, game over para la sesión
+           newIsActive = false; // No hay siguiente, cerramos sesión
         }
+        // Si el candidato somos nosotros mismos (única cuenta), no rotamos
       }
 
       // Actualizamos la cuenta actual
@@ -139,7 +140,7 @@ export const useTradingStore = create((set) => ({
         balance_actual_usd: newBalance,
         pnl_acumulado_usd: (account.pnl_acumulado_usd || 0) + finalPnl,
         estado: newEstado || 'activo',
-        es_cuenta_activa: isActive ?? false
+        es_cuenta_activa: newIsActive
       });
 
       // Si hay una cuenta siguiente, la activamos
