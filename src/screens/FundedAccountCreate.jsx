@@ -43,6 +43,10 @@ export default function FundedAccountCreate() {
         estado: 'activo',
         user_id: 'user_test_123',
         createdAt: new Date().toISOString(),
+        en_retiro: false,
+        fecha_cobro: null,
+        ciclo_actual: 1,
+        historial_ciclos: [],
       });
       addToast(`✅ ${form.nombre} creada correctamente.`, 'success');
       navigate('/fondeadas');
@@ -126,24 +130,43 @@ export default function FundedAccountCreate() {
           </div>
         </div>
 
-        {/* Regla de consistencia */}
-        <div style={styles.toggleRow}>
-          <div>
-            <div style={styles.toggleLabel}>Regla de Consistencia</div>
-            <div style={styles.toggleSubLabel}>El mejor día no puede superar X% del total de ganancias</div>
+        {/* Tipo de cuenta */}
+        <div style={styles.field}>
+          <label style={styles.label}>Tipo de cuenta</label>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              style={{
+                flex: 1, padding: '14px 12px', borderRadius: '14px', cursor: 'pointer',
+                border: form.regla_consistencia ? '2px solid var(--accent-blue)' : '1px solid var(--border)',
+                backgroundColor: form.regla_consistencia ? 'rgba(10,132,255,0.1)' : 'var(--bg-secondary)',
+                textAlign: 'left',
+              }}
+              onClick={() => handleChange('regla_consistencia', true)}
+            >
+              <div style={{ fontSize: '14px', fontWeight: '700', color: form.regla_consistencia ? 'var(--accent-blue)' : 'var(--text-primary)', marginBottom: '4px' }}>
+                Con consistencia
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                El mejor día no puede superar X% del total
+              </div>
+            </button>
+            <button
+              style={{
+                flex: 1, padding: '14px 12px', borderRadius: '14px', cursor: 'pointer',
+                border: !form.regla_consistencia ? '2px solid var(--accent-blue)' : '1px solid var(--border)',
+                backgroundColor: !form.regla_consistencia ? 'rgba(10,132,255,0.1)' : 'var(--bg-secondary)',
+                textAlign: 'left',
+              }}
+              onClick={() => handleChange('regla_consistencia', false)}
+            >
+              <div style={{ fontSize: '14px', fontWeight: '700', color: !form.regla_consistencia ? 'var(--accent-blue)' : 'var(--text-primary)', marginBottom: '4px' }}>
+                Sin consistencia
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                Retiro libre al alcanzar el objetivo %
+              </div>
+            </button>
           </div>
-          <button
-            style={{
-              ...styles.toggle,
-              backgroundColor: form.regla_consistencia ? 'var(--accent-blue)' : 'var(--bg-tertiary)',
-            }}
-            onClick={() => handleChange('regla_consistencia', !form.regla_consistencia)}
-          >
-            <div style={{
-              ...styles.toggleKnob,
-              transform: form.regla_consistencia ? 'translateX(22px)' : 'translateX(2px)',
-            }} />
-          </button>
         </div>
 
         {/* Porcentaje de consistencia (visible solo si está activa) */}

@@ -99,6 +99,7 @@ export default function TradeCreate() {
             <option value="USOIL">USOIL (Petróleo WTI)</option>
             <option value="US30">US30 (Dow)</option>
             <option value="NAS100">NAS100 (Nasdaq)</option>
+            <option value="US500">US500 (S&P 500)</option>
           </select>
         </div>
 

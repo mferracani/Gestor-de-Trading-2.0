@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { ArrowLeft, Archive, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useToast } from '../components/ui/Toast';
+import { useTradingStore } from '../store/useTradingStore';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 export default function FundedAccountDetail() {
@@ -14,28 +15,31 @@ export default function FundedAccountDetail() {
   const [account, setAccount] = useState(null);
   const [trades, setTrades] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showStopPanel, setShowStopPanel] = useState(false);
+  const [fechaCobro, setFechaCobro] = useState('');
+  const [savingStop, setSavingStop] = useState(false);
+  const [savingCiclo, setSavingCiclo] = useState(false);
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true);
-      try {
-        const docRef = doc(db, 'funded_accounts', id);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) setAccount({ id: docSnap.id, ...docSnap.data() });
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const docRef = doc(db, 'funded_accounts', id);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) setAccount({ id: docSnap.id, ...docSnap.data() });
 
-        const qTrades = query(collection(db, 'trades'), where('account_id', '==', id));
-        const tradesSnap = await getDocs(qTrades);
-        const _trades = tradesSnap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
-        setTrades(_trades);
-      } catch (err) {
-        console.error('Error cargando cuenta fondeada:', err);
-      }
-      setLoading(false);
+      const qTrades = query(collection(db, 'trades'), where('account_id', '==', id));
+      const tradesSnap = await getDocs(qTrades);
+      const _trades = tradesSnap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+      setTrades(_trades);
+    } catch (err) {
+      console.error('Error cargando cuenta fondeada:', err);
     }
-    load();
+    setLoading(false);
   }, [id]);
+
+  useEffect(() => { load(); }, [load]);
 
   const handleArchive = async () => {
     if (!window.confirm('¿Archivar esta cuenta?')) return;
@@ -46,6 +50,32 @@ export default function FundedAccountDetail() {
     } catch {
       addToast('Error al archivar.', 'error');
     }
+  };
+
+  const handleStopParaRetiro = async () => {
+    setSavingStop(true);
+    try {
+      await useTradingStore.getState().stopParaRetiro(account.id, fechaCobro || null);
+      setAccount(prev => ({ ...prev, en_retiro: true, fecha_cobro: fechaCobro || null }));
+      setShowStopPanel(false);
+      addToast('Retiro iniciado correctamente.', 'success');
+    } catch (err) {
+      addToast(err.message || 'Error al iniciar retiro.', 'error');
+    }
+    setSavingStop(false);
+  };
+
+  const handleIniciarNuevoCiclo = async () => {
+    if (!window.confirm('¿Iniciar nuevo ciclo? El PnL y balance se resetearán.')) return;
+    setSavingCiclo(true);
+    try {
+      await useTradingStore.getState().iniciarNuevoCiclo(account.id);
+      await load();
+      addToast('Nuevo ciclo iniciado. ¡A operar!', 'success');
+    } catch (err) {
+      addToast(err.message || 'Error al iniciar ciclo.', 'error');
+    }
+    setSavingCiclo(false);
   };
 
   if (loading) return <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-secondary)' }}>Cargando cuenta...</div>;
@@ -61,7 +91,21 @@ export default function FundedAccountDetail() {
   const progresoPct = Math.min(100, Math.max(0, (pnl / targetRetiroUsd) * 100));
   const isLogrado = faltaUsd <= 0 && pnl > 0;
 
+  const enRetiro = account.en_retiro === true;
+  const cicloActual = account.ciclo_actual ?? 1;
+  const historialCiclos = account.historial_ciclos ?? [];
+  const diasParaCobro = (() => {
+    if (!account.fecha_cobro) return null;
+    const cobro = new Date(account.fecha_cobro);
+    const hoy = new Date();
+    cobro.setHours(0, 0, 0, 0); hoy.setHours(0, 0, 0, 0);
+    return Math.round((cobro - hoy) / (1000 * 60 * 60 * 24));
+  })();
+
   // ── Consistencia: agrupamos por día ──────────────────────────────────
+  // Fórmula real de prop firms (Alpha Capital, FTMO, etc.):
+  // Consistencia = Best Day Profit / PnL neto total
+  // NO usar solo días positivos — los días negativos reducen el denominador y empeoran la consistencia
   const limitePct = account.consistencia_pct || 40;
   const tradesByDay = trades.reduce((acc, t) => {
     const day = (t.fecha || '').slice(0, 10);
@@ -69,23 +113,22 @@ export default function FundedAccountDetail() {
     return acc;
   }, {});
   const dailyPnls = Object.values(tradesByDay);
-  const totalWins = dailyPnls.filter(d => d > 0).reduce((s, d) => s + d, 0);
+  const totalWins = dailyPnls.filter(d => d > 0).reduce((s, d) => s + d, 0); // solo para display
   const bestDayProfit = dailyPnls.length > 0 ? Math.max(0, ...dailyPnls) : 0;
-  const consistenciaPct = totalWins > 0 ? (bestDayProfit / totalWins) * 100 : 0;
+  // Denominador = PnL neto (igual que lo calcula la prop firm)
+  const consistenciaPct = pnl > 0 ? (bestDayProfit / pnl) * 100 : 0;
   const consistenciaOk = account.regla_consistencia ? consistenciaPct <= limitePct : true;
 
   // ── Recomendaciones expertas ──────────────────────────────────────────
-  // Para que la consistencia sea válida: totalWins necesita ser >= bestDay / (limitePct/100)
-  const totalWinsNecesario = bestDayProfit > 0 ? bestDayProfit / (limitePct / 100) : 0;
-  const ganarAdicionalNecesario = Math.max(0, totalWinsNecesario - totalWins);
+  // Profit neto total necesario para que bestDay quede dentro del límite:
+  const profitNecesarioConsistencia = bestDayProfit > 0 ? bestDayProfit / (limitePct / 100) : 0;
+  const ganarAdicionalNecesario = Math.max(0, profitNecesarioConsistencia - pnl);
 
-  // Zona segura para el próximo día ganador:
-  // Si la consistencia está OK: máximo = totalWins * limitePct/100 * 0.85 (con margen de seguridad)
-  // Si está en alerta: cualquier día ganador nuevo no debe superar bestDayProfit y debe aportar al total
-  const maxDiaSeguridadFactor = 0.85; // 85% del límite teórico para margen
+  // Zona segura para el próximo día ganador (sobre PnL neto, con 85% de margen)
+  const maxDiaSeguridadFactor = 0.85;
   const maxProximoDia = consistenciaOk
-    ? Math.floor(totalWins * (limitePct / 100) * maxDiaSeguridadFactor)
-    : Math.floor(Math.min(bestDayProfit * 0.7, ganarAdicionalNecesario * 0.5)); // no superar el bestDay
+    ? Math.floor(pnl * (limitePct / 100) * maxDiaSeguridadFactor)
+    : Math.floor(Math.min(bestDayProfit * 0.7, ganarAdicionalNecesario * 0.5));
   const minProximoDia = Math.max(10, Math.floor(maxProximoDia * 0.3));
 
   // Días estimados para el objetivo de retiro (con días promedio entre min y max)
@@ -99,6 +142,51 @@ export default function FundedAccountDetail() {
   const pnlTrasPerdida = pnl - worstDay;
   const progresoTrasPerdida = Math.min(100, Math.max(0, (pnlTrasPerdida / targetRetiroUsd) * 100));
   const perdidaRecomendadaMax = Math.round(inicial * 0.005); // max 0.5% del inicial por día
+
+  // ── Risk Manager ───────────────────────────────────────────────────────
+  const profitRequeridoConsistencia = profitNecesarioConsistencia; // = bestDay / (limitePct/100)
+  const gapConsistencia = ganarAdicionalNecesario;
+  const payoutHabilitado = isLogrado && consistenciaOk;
+
+  // Escenarios dinámicos basados en la situación real
+  const pnlBuffer = Math.max(0, pnl - targetRetiroUsd); // margen antes de perder el profit target
+
+  const calcScenario = (amount) => {
+    const newPnl = pnl + amount;
+    const newBestDay = amount > 0 ? Math.max(bestDayProfit, amount) : bestDayProfit;
+    const newConsistenciaPct = newPnl > 0 ? (newBestDay / newPnl) * 100 : 0;
+    const newConsistenciaOk = newConsistenciaPct <= limitePct;
+    const newIsLogrado = newPnl >= targetRetiroUsd && newPnl > 0;
+    return { amount, newPnl, newConsistenciaPct, newConsistenciaOk, newIsLogrado, newPayoutOk: newIsLogrado && newConsistenciaOk };
+  };
+
+  // Ganancias: pasos progresivos hacia el payout
+  const step1 = Math.max(10, Math.round(gapConsistencia * 0.25));
+  const step2 = Math.round(gapConsistencia * 0.55);
+  const step3 = Math.ceil(gapConsistencia); // monto exacto que desbloquea el payout
+  const gainsScenarios = [
+    { label: 'Pequeño avance', sublabel: 'Empieza a mover la aguja', ...calcScenario(step1) },
+    { label: 'Avance sólido', sublabel: `${Math.round((step2 / gapConsistencia) * 100)}% del gap`, ...calcScenario(step2) },
+    { label: 'Desbloquea payout', sublabel: 'Consistencia llega al límite', ...calcScenario(step3), highlight: true },
+    ...(bestDayProfit > step3 * 1.25
+      ? [{ label: 'Zona extra segura', sublabel: `Margen antes del best day`, ...calcScenario(Math.floor(bestDayProfit * 0.88)) }]
+      : []),
+  ];
+
+  // Pérdidas: cuánto podés perder y sus consecuencias
+  const lossScenarios = (() => {
+    const rows = [];
+    const smallLoss = Math.round(Math.min(pnlBuffer * 0.45, perdidaRecomendadaMax * 0.6));
+    if (smallLoss > 0 && pnlBuffer > 0) {
+      rows.push({ label: 'Pérdida tolerable', sublabel: 'Retroceso, target intacto', ...calcScenario(-smallLoss) });
+    }
+    if (pnlBuffer > 0) {
+      rows.push({ label: 'Pierde profit target', sublabel: `Más de $${pnlBuffer.toFixed(0)} te saca del target`, ...calcScenario(-(Math.floor(pnlBuffer) + 1)), critical: true });
+    }
+    rows.push({ label: `Límite diario (0.5%)`, sublabel: 'Máximo recomendado por sesión', ...calcScenario(-perdidaRecomendadaMax) });
+    // Deduplicar si montos muy cercanos
+    return rows.filter((r, i, arr) => arr.findIndex(o => Math.abs(o.amount - r.amount) < 3) === i).sort((a, b) => b.amount - a.amount);
+  })();
 
   const winCount = trades.filter(t => t.resultado === 'WIN').length;
   const winRate = trades.length > 0 ? Math.round((winCount / trades.length) * 100) : 0;
@@ -121,7 +209,16 @@ export default function FundedAccountDetail() {
 
       {/* Badge + Nombre */}
       <div style={styles.topSection}>
-        <div style={styles.brokerBadge}>{account.broker || 'Cuenta Fondeada'}</div>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+          <div style={styles.brokerBadge}>{account.broker || 'Cuenta Fondeada'}</div>
+          <div style={{
+            ...styles.brokerBadge,
+            color: account.regla_consistencia ? '#ff9f0a' : '#30d158',
+            backgroundColor: account.regla_consistencia ? 'rgba(255,159,10,0.1)' : 'rgba(48,209,88,0.1)',
+          }}>
+            {account.regla_consistencia ? 'Con consistencia' : 'Sin consistencia'}
+          </div>
+        </div>
         <h1 style={styles.title}>{account.nombre}</h1>
       </div>
 
@@ -185,117 +282,484 @@ export default function FundedAccountDetail() {
           <span style={styles.progressFooterText}>$0</span>
           <span style={styles.progressFooterText}>Meta: ${targetRetiroUsd.toLocaleString()}</span>
         </div>
+
+        {/* Botón Stop para Retiro — aparece cuando el objetivo está logrado y no hay retiro en curso */}
+        {isLogrado && !enRetiro && (
+          <div>
+            {!showStopPanel ? (
+              <button
+                style={{
+                  width: '100%', marginTop: '4px',
+                  backgroundColor: 'rgba(48,209,88,0.12)',
+                  border: '1px solid rgba(48,209,88,0.3)',
+                  color: '#30d158', borderRadius: '14px',
+                  padding: '12px 16px', fontSize: '15px',
+                  fontWeight: '700', cursor: 'pointer',
+                }}
+                onClick={() => setShowStopPanel(true)}
+              >
+                Parar para Retiro
+              </button>
+            ) : (
+              <div style={{
+                marginTop: '4px', padding: '16px',
+                backgroundColor: 'rgba(48,209,88,0.06)',
+                border: '1px solid rgba(48,209,88,0.2)',
+                borderRadius: '14px', display: 'flex',
+                flexDirection: 'column', gap: '12px',
+              }}>
+                <div style={{ fontSize: '14px', fontWeight: '600', color: '#30d158' }}>
+                  Fecha de cobro (opcional)
+                </div>
+                <input
+                  type="date"
+                  value={fechaCobro}
+                  onChange={e => setFechaCobro(e.target.value)}
+                  style={{
+                    backgroundColor: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '10px', padding: '10px 14px',
+                    fontSize: '15px', color: 'var(--text-primary)',
+                    outline: 'none', width: '100%', boxSizing: 'border-box',
+                  }}
+                />
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    style={{
+                      flex: 1, padding: '12px',
+                      backgroundColor: 'transparent',
+                      border: '1px solid var(--border)',
+                      borderRadius: '12px', color: 'var(--text-secondary)',
+                      fontSize: '14px', fontWeight: '600', cursor: 'pointer',
+                    }}
+                    onClick={() => setShowStopPanel(false)}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    style={{
+                      flex: 2, padding: '12px',
+                      backgroundColor: '#30d158', border: 'none',
+                      borderRadius: '12px', color: '#000',
+                      fontSize: '14px', fontWeight: '700', cursor: 'pointer',
+                      opacity: savingStop ? 0.7 : 1,
+                    }}
+                    onClick={handleStopParaRetiro}
+                    disabled={savingStop}
+                  >
+                    {savingStop ? 'Guardando...' : 'Confirmar Retiro'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* ── Panel de Análisis Experto ── */}
-      {account.regla_consistencia && trades.length > 0 && (
+      {/* Panel "Retiro en curso" — aparece cuando en_retiro es true */}
+      {enRetiro && (
+        <div style={{
+          backgroundColor: 'rgba(48,209,88,0.07)',
+          border: '1px solid rgba(48,209,88,0.3)',
+          borderRadius: '16px', padding: '20px',
+          marginBottom: '16px', display: 'flex',
+          flexDirection: 'column', gap: '16px',
+        }}>
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '22px' }}>💰</span>
+            <div>
+              <div style={{ fontSize: '16px', fontWeight: '700', color: '#30d158' }}>
+                Retiro en curso
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                Ciclo {cicloActual} completado · Trading bloqueado
+              </div>
+            </div>
+          </div>
+
+          {/* Monto a cobrar */}
+          <div style={{
+            backgroundColor: 'var(--bg-secondary)',
+            borderRadius: '12px', padding: '14px 16px',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          }}>
+            <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Monto a cobrar</span>
+            <span style={{ fontSize: '22px', fontWeight: '800', color: '#30d158' }}>
+              +${pnl.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+
+          {/* Fecha de cobro editable */}
+          <div style={{
+            backgroundColor: 'var(--bg-secondary)',
+            borderRadius: '12px', padding: '14px 16px',
+            display: 'flex', flexDirection: 'column', gap: '8px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Fecha de cobro</span>
+              {account.fecha_cobro && diasParaCobro !== null && (
+                <span style={{
+                  fontSize: '12px', fontWeight: '600',
+                  color: diasParaCobro < 0 ? '#ff453a' : diasParaCobro === 0 ? '#30d158' : '#ff9f0a',
+                  backgroundColor: diasParaCobro < 0 ? 'rgba(255,69,58,0.12)' : diasParaCobro === 0 ? 'rgba(48,209,88,0.12)' : 'rgba(255,159,10,0.12)',
+                  padding: '3px 10px', borderRadius: '8px',
+                }}>
+                  {diasParaCobro < 0
+                    ? `Hace ${Math.abs(diasParaCobro)} días`
+                    : diasParaCobro === 0
+                    ? 'Hoy'
+                    : `En ${diasParaCobro} días`}
+                </span>
+              )}
+            </div>
+            <input
+              type="date"
+              value={account.fecha_cobro || ''}
+              onChange={async (e) => {
+                const newDate = e.target.value;
+                try {
+                  await updateDoc(doc(db, 'funded_accounts', account.id), { fecha_cobro: newDate });
+                  setAccount(prev => ({ ...prev, fecha_cobro: newDate }));
+                  addToast('Fecha de cobro actualizada.', 'success');
+                } catch {
+                  addToast('Error al actualizar la fecha.', 'error');
+                }
+              }}
+              style={{
+                backgroundColor: 'var(--bg-tertiary)',
+                border: '1px solid var(--border)', borderRadius: '10px',
+                padding: '8px 12px', fontSize: '14px',
+                color: account.fecha_cobro ? 'var(--text-primary)' : 'var(--text-secondary)',
+                outline: 'none', width: '100%', boxSizing: 'border-box',
+              }}
+            />
+            {!account.fecha_cobro && (
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                Sin fecha asignada — editá cuando confirme la prop firm
+              </div>
+            )}
+          </div>
+
+          {/* Botón Iniciar Nuevo Ciclo */}
+          <button
+            style={{
+              width: '100%', padding: '14px',
+              backgroundColor: 'var(--accent-blue)', border: 'none',
+              borderRadius: '14px', color: '#fff',
+              fontSize: '15px', fontWeight: '700',
+              cursor: 'pointer', opacity: savingCiclo ? 0.7 : 1,
+            }}
+            onClick={handleIniciarNuevoCiclo}
+            disabled={savingCiclo}
+          >
+            {savingCiclo ? 'Iniciando ciclo...' : 'Iniciar Nuevo Ciclo'}
+          </button>
+        </div>
+      )}
+
+      {/* ── Risk Manager Panel (con regla de consistencia) ── */}
+      {account.regla_consistencia && (
         <div style={{
           ...styles.guiaCard,
-          borderColor: consistenciaOk ? 'rgba(48,209,88,0.25)' : 'rgba(255,159,10,0.3)',
-          backgroundColor: consistenciaOk ? 'rgba(48,209,88,0.05)' : 'rgba(255,159,10,0.06)',
+          borderColor: payoutHabilitado ? 'rgba(48,209,88,0.3)' : !consistenciaOk ? 'rgba(255,159,10,0.35)' : 'rgba(255,255,255,0.1)',
+          backgroundColor: payoutHabilitado ? 'rgba(48,209,88,0.05)' : !consistenciaOk ? 'rgba(255,159,10,0.05)' : 'var(--bg-secondary)',
         }}>
 
-          {/* Encabezado */}
+          {/* Header */}
           <div style={styles.guiaHeader}>
             <div style={styles.guiaHeaderLeft}>
-              <span style={{ fontSize: 20 }}>{consistenciaOk ? '🧠' : '⚠️'}</span>
+              <span style={{ fontSize: 20 }}>
+                {payoutHabilitado ? '✅' : !consistenciaOk ? '⚠️' : '🔒'}
+              </span>
               <div>
-                <div style={styles.guiaTitulo}>Análisis de Gestión</div>
+                <div style={styles.guiaTitulo}>Risk Manager</div>
                 <div style={styles.guiaSubtitulo}>
-                  Consistencia {limitePct}% · Mejor día: {fmt(bestDayProfit)} ({Math.round(consistenciaPct)}% del total)
+                  Consistencia {limitePct}% · Mejor día: {fmt(bestDayProfit)} · PnL neto: {pnl >= 0 ? '+' : ''}{fmt(pnl)}
                 </div>
               </div>
             </div>
             <div style={{
               ...styles.guiaBadge,
-              backgroundColor: consistenciaOk ? 'rgba(48,209,88,0.15)' : 'rgba(255,159,10,0.15)',
-              color: consistenciaOk ? '#30d158' : '#ff9f0a',
+              backgroundColor: payoutHabilitado ? 'rgba(48,209,88,0.15)' : 'rgba(255,69,58,0.12)',
+              color: payoutHabilitado ? '#30d158' : '#ff453a',
             }}>
-              {consistenciaOk ? 'En regla' : 'Fuera de límite'}
+              {payoutHabilitado ? 'Payout OK' : 'Bloqueado'}
             </div>
           </div>
 
-          <div style={styles.guiaDivider} />
+          {/* Badges de elegibilidad */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)' }}>
+            <div style={styles.rmEligRow}>
+              <span style={styles.rmEligLabel}>Profit Target ({targetRetiroPct}%)</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {!isLogrado && <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Faltan {fmt(faltaUsd)}</span>}
+                <span style={{ ...styles.rmStatusBadge, backgroundColor: isLogrado ? 'rgba(48,209,88,0.15)' : 'rgba(255,69,58,0.12)', color: isLogrado ? '#30d158' : '#ff453a' }}>
+                  {isLogrado ? '✔ Alcanzado' : '❌ Pendiente'}
+                </span>
+              </div>
+            </div>
+            <div style={styles.rmEligRow}>
+              <span style={styles.rmEligLabel}>Consistencia (máx {limitePct}%)</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Actual: {Math.round(consistenciaPct)}%</span>
+                <span style={{ ...styles.rmStatusBadge, backgroundColor: consistenciaOk ? 'rgba(48,209,88,0.15)' : 'rgba(255,159,10,0.15)', color: consistenciaOk ? '#30d158' : '#ff9f0a' }}>
+                  {consistenciaOk ? '✔ En regla' : '❌ Fuera de límite'}
+                </span>
+              </div>
+            </div>
+            <div style={{ ...styles.rmEligRow, borderBottomWidth: 0 }}>
+              <span style={{ ...styles.rmEligLabel, fontWeight: '700', color: 'var(--text-primary)' }}>Payout habilitado</span>
+              <span style={{ ...styles.rmStatusBadge, backgroundColor: payoutHabilitado ? 'rgba(48,209,88,0.2)' : 'rgba(255,69,58,0.15)', color: payoutHabilitado ? '#30d158' : '#ff453a', fontWeight: '700' }}>
+                {payoutHabilitado ? '✔ Sí' : '❌ No'}
+              </span>
+            </div>
+          </div>
 
-          {/* Bloque 1: Próximo día ganador */}
-          <div style={styles.guiaBloque}>
-            <div style={styles.guiaIcono}>🎯</div>
-            <div>
-              <div style={styles.guiaBloqueTitle}>Próximo día ganador recomendado</div>
-              {consistenciaOk ? (
-                <div style={styles.guiaBloqueText}>
-                  Apuntá a ganar entre <strong style={{ color: '#30d158' }}>{fmt(minProximoDia)}</strong> y{' '}
-                  <strong style={{ color: '#30d158' }}>{fmt(maxProximoDia)}</strong> en tu próxima sesión.
-                  Eso mantiene tu mejor día dentro del límite del {limitePct}%.
-                </div>
-              ) : (
-                <div style={styles.guiaBloqueText}>
-                  Tu mejor día ({fmt(bestDayProfit)}) representa el {Math.round(consistenciaPct)}% del total.
-                  Necesitás acumular <strong style={{ color: '#ff9f0a' }}>{fmt(ganarAdicionalNecesario)}</strong> más
-                  en días distintos. Objetivos seguros: <strong>{fmt(minProximoDia)}–{fmt(maxProximoDia)}</strong> por sesión.
+          {trades.length === 0 ? (
+            <div style={{ ...styles.guiaBloqueText, textAlign: 'center', paddingTop: '4px' }}>
+              Registrá tu primer trade para ver el análisis completo.
+            </div>
+          ) : (
+            <>
+              <div style={styles.guiaDivider} />
+
+              {/* Bloqueo principal */}
+              {!payoutHabilitado && (
+                <div style={styles.guiaBloque}>
+                  <div style={styles.guiaIcono}>🔒</div>
+                  <div>
+                    <div style={styles.guiaBloqueTitle}>Bloqueo principal</div>
+                    <div style={styles.guiaBloqueText}>
+                      {!consistenciaOk && isLogrado && <>
+                        Profit target alcanzado ({fmt(pnl)}), pero la consistencia está fuera de regla.{' '}
+                        Tu mejor día ({fmt(bestDayProfit)}) representa el{' '}
+                        <strong style={{ color: '#ff9f0a' }}>{Math.round(consistenciaPct)}%</strong> del total de ganancias ({fmt(totalWins)}).
+                        {' '}El límite es {limitePct}%.
+                      </>}
+                      {!isLogrado && consistenciaOk && <>
+                        Faltan <strong style={{ color: '#ff453a' }}>{fmt(faltaUsd)}</strong> para alcanzar el profit target del {targetRetiroPct}% ({fmt(targetRetiroUsd)}).
+                      </>}
+                      {!isLogrado && !consistenciaOk && <>
+                        Dos bloqueos activos: faltan <strong style={{ color: '#ff453a' }}>{fmt(faltaUsd)}</strong> para el profit target,
+                        y la consistencia está en {Math.round(consistenciaPct)}% (límite: {limitePct}%).
+                      </>}
+                    </div>
+                  </div>
                 </div>
               )}
-            </div>
-          </div>
 
-          {/* Bloque 2: Camino al retiro */}
-          <div style={styles.guiaBloque}>
-            <div style={styles.guiaIcono}>🏁</div>
-            <div>
-              <div style={styles.guiaBloqueTitle}>Camino al objetivo de retiro</div>
-              <div style={styles.guiaBloqueText}>
-                Te faltan <strong style={{ color: '#fff' }}>{fmt(faltaUsd)}</strong> para retirar
-                ({fmt(targetRetiroUsd)} · {targetRetiroPct}%) ·{' '}
-                {diasEstimadosRetiro
-                  ? <>Estimado: <strong style={{ color: '#0af' }}>~{diasEstimadosRetiro} sesiones ganadoras</strong> con días de {fmt(minProximoDia)}–{fmt(maxProximoDia)}.</>
-                  : 'No se puede estimar sin un objetivo de ganancia diaria.'}
+              {/* Objetivo para cumplir consistencia */}
+              {!consistenciaOk && (
+                <div style={styles.guiaBloque}>
+                  <div style={styles.guiaIcono}>🎯</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={styles.guiaBloqueTitle}>Objetivo para cumplir consistencia</div>
+                    <div style={{ ...styles.guiaBloqueText, marginBottom: '10px' }}>
+                      Con tu mejor día en {fmt(bestDayProfit)}, el total de ganancias debe alcanzar{' '}
+                      <strong style={{ color: '#ff9f0a' }}>{fmt(profitRequeridoConsistencia)}</strong>.{' '}
+                      Profit actual: <strong style={{ color: pnlColor }}>{fmt(pnl)}</strong>.{' '}
+                      Gap: <strong style={{ color: '#ff9f0a' }}>{fmt(gapConsistencia)}</strong> distribuidos en múltiples días sin superar {fmt(bestDayProfit)} en ninguno.
+                    </div>
+                    {profitRequeridoConsistencia > 0 && (
+                      <div>
+                        <div style={styles.progressTrack}>
+                          <div style={{ ...styles.progressFill, width: `${Math.min(100, (pnl / profitRequeridoConsistencia) * 100)}%`, backgroundColor: '#ff9f0a' }} />
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+                          <span style={styles.progressFooterText}>{fmt(pnl)} actual</span>
+                          <span style={styles.progressFooterText}>Meta: {fmt(profitRequeridoConsistencia)}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div style={styles.guiaDivider} />
+
+              {/* Tabla de escenarios — dos secciones */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+
+                {/* Header sección ganancias */}
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: '700', color: '#30d158' }}>Ganancias — ¿Cuándo asegurar el trade?</span>
+                    {bestDayProfit > 0 && (
+                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>No superar {fmt(bestDayProfit)} / día</span>
+                    )}
+                  </div>
+                  <div style={{ borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(48,209,88,0.2)' }}>
+                    {gainsScenarios.map(({ label, sublabel, amount, newPnl, newConsistenciaPct, newConsistenciaOk, newPayoutOk, highlight }) => (
+                      <div key={amount} style={{
+                        display: 'grid', gridTemplateColumns: '1fr auto',
+                        padding: '12px 14px', alignItems: 'center', gap: '12px',
+                        backgroundColor: highlight ? 'rgba(48,209,88,0.08)' : 'var(--bg-secondary)',
+                        borderTop: '1px solid var(--border)',
+                      }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '14px', fontWeight: '700', color: '#30d158' }}>
+                              +{fmt(amount)}
+                            </span>
+                            <span style={{ fontSize: '12px', fontWeight: '600', color: highlight ? '#30d158' : 'var(--text-primary)' }}>
+                              {label}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                            {sublabel} · PnL total: {fmt(newPnl)} · Consistencia: {Math.round(newConsistenciaPct)}%
+                          </div>
+                        </div>
+                        <span style={{
+                          fontSize: '12px', fontWeight: '700', padding: '4px 12px', borderRadius: '10px', whiteSpace: 'nowrap',
+                          backgroundColor: newPayoutOk ? 'rgba(48,209,88,0.2)' : newConsistenciaOk ? 'rgba(48,209,88,0.1)' : 'rgba(255,159,10,0.12)',
+                          color: newPayoutOk ? '#30d158' : newConsistenciaOk ? '#30d158' : '#ff9f0a',
+                          border: highlight ? '1px solid rgba(48,209,88,0.4)' : 'none',
+                        }}>
+                          {newPayoutOk ? '✔ Payout OK' : `${Math.round(newConsistenciaPct)}% consist.`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Header sección pérdidas */}
+                {lossScenarios.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#ff453a', marginBottom: '8px' }}>
+                      Pérdidas — ¿Cuándo cortar?
+                      {pnlBuffer > 0 && (
+                        <span style={{ fontSize: '11px', fontWeight: '500', color: 'var(--text-secondary)', marginLeft: '8px' }}>
+                          Buffer sobre profit target: {fmt(pnlBuffer)}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(255,69,58,0.2)' }}>
+                      {lossScenarios.map(({ label, sublabel, amount, newPnl, newConsistenciaPct, newIsLogrado, newPayoutOk, critical }) => (
+                        <div key={amount} style={{
+                          display: 'grid', gridTemplateColumns: '1fr auto',
+                          padding: '12px 14px', alignItems: 'center', gap: '12px',
+                          backgroundColor: critical ? 'rgba(255,69,58,0.06)' : 'var(--bg-secondary)',
+                          borderTop: '1px solid var(--border)',
+                        }}>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontSize: '14px', fontWeight: '700', color: '#ff453a' }}>
+                                {fmt(amount)}
+                              </span>
+                              <span style={{ fontSize: '12px', fontWeight: '600', color: critical ? '#ff453a' : 'var(--text-primary)' }}>
+                                {label}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                              {sublabel} · PnL total: {newIsLogrado ? '+' : ''}{fmt(newPnl)}
+                              {newIsLogrado ? ` · Consist. ${Math.round(newConsistenciaPct)}%` : ' · Target perdido'}
+                            </div>
+                          </div>
+                          <span style={{
+                            fontSize: '12px', fontWeight: '700', padding: '4px 12px', borderRadius: '10px', whiteSpace: 'nowrap',
+                            backgroundColor: critical ? 'rgba(255,69,58,0.15)' : 'rgba(255,159,10,0.12)',
+                            color: critical ? '#ff453a' : '#ff9f0a',
+                            border: critical ? '1px solid rgba(255,69,58,0.3)' : 'none',
+                          }}>
+                            {newIsLogrado ? '⚠️ Retroceso' : '❌ Target perdido'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          </div>
 
-          {/* Bloque 3: Escenario de pérdida */}
-          <div style={styles.guiaBloque}>
-            <div style={styles.guiaIcono}>🛡️</div>
-            <div>
-              <div style={styles.guiaBloqueTitle}>Si el próximo trade es una pérdida</div>
-              <div style={styles.guiaBloqueText}>
-                Pérdida diaria máxima recomendada: <strong style={{ color: '#ff453a' }}>{fmt(perdidaRecomendadaMax)}</strong> (0.5% del cuenta).
-                Una pérdida similar a tus peores días ({fmt(worstDay)}) dejaría tu PnL en{' '}
-                <strong style={{ color: pnlTrasPerdida >= 0 ? '#30d158' : '#ff453a' }}>
-                  {pnlTrasPerdida >= 0 ? '+' : '-'}{fmt(pnlTrasPerdida)}
-                </strong>{' '}y tu progreso en {Math.round(progresoTrasPerdida)}%.
-              </div>
-            </div>
-          </div>
+              <div style={styles.guiaDivider} />
 
-          {/* Bloque 4: Estado de consistencia detallado */}
-          {!consistenciaOk && (
-            <div style={{ ...styles.guiaBloque, alignItems: 'flex-start' }}>
-              <div style={styles.guiaIcono}>📊</div>
-              <div>
-                <div style={styles.guiaBloqueTitle}>Para regularizar la consistencia</div>
-                <div style={styles.guiaBloqueText}>
-                  Con tu mejor día en {fmt(bestDayProfit)}, el total de ganancias debe llegar a al menos{' '}
-                  <strong style={{ color: '#ff9f0a' }}>{fmt(totalWinsNecesario)}</strong>.
-                  Actualmente estás en <strong>{fmt(totalWins)}</strong>. Necesitás{' '}
-                  <strong style={{ color: '#ff9f0a' }}>{fmt(ganarAdicionalNecesario)}</strong> más,
-                  distribuidos en múltiples sesiones sin superar {fmt(bestDayProfit)} en ningún día.
+              {/* Plan de acción */}
+              <div style={styles.guiaBloque}>
+                <div style={styles.guiaIcono}>📋</div>
+                <div>
+                  <div style={styles.guiaBloqueTitle}>Plan de acción</div>
+                  <div style={styles.guiaBloqueText}>
+                    {payoutHabilitado && <>
+                      Payout habilitado. Podés detener el trading y solicitar el retiro.
+                    </>}
+                    {!payoutHabilitado && !consistenciaOk && isLogrado && <>
+                      Profit target cumplido. Único bloqueo: consistencia. Necesitás{' '}
+                      <strong style={{ color: '#ff9f0a' }}>{fmt(gapConsistencia)}</strong> adicionales distribuidos en múltiples días.
+                      Rango diario recomendado: <strong style={{ color: '#30d158' }}>{fmt(minProximoDia)}–{fmt(maxProximoDia)}</strong>.
+                      No cerrés el trading — operá con tamaño reducido para acumular sin arriesgar el profit alcanzado.
+                    </>}
+                    {!payoutHabilitado && !isLogrado && <>
+                      Faltan <strong style={{ color: '#ff453a' }}>{fmt(faltaUsd)}</strong> para el profit target.
+                      {consistenciaOk
+                        ? <> Consistencia OK. Sesiones de {fmt(minProximoDia)}–{fmt(maxProximoDia)} · ~{diasEstimadosRetiro ?? '?'} días estimados.</>
+                        : <> Además, consistencia fuera de regla. Priorizá sesiones de {fmt(minProximoDia)}–{fmt(maxProximoDia)} para avanzar en ambas métricas.</>
+                      }
+                    </>}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
 
+              {/* Alertas */}
+              {!payoutHabilitado && (
+                <div style={{ backgroundColor: 'rgba(255,159,10,0.07)', border: '1px solid rgba(255,159,10,0.2)', borderRadius: '12px', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '700', color: '#ff9f0a', marginBottom: '2px' }}>Alertas</div>
+                  {bestDayProfit > 0 && (
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                      ⚠️ Ganar más de <strong style={{ color: '#ff9f0a' }}>{fmt(bestDayProfit)}</strong> en un solo día establece un nuevo best day y empeora la consistencia.
+                    </div>
+                  )}
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                    ⚠️ Una pérdida baja el PnL total sin mejorar la consistencia. Pérdida diaria prudente máxima: <strong style={{ color: '#ff453a' }}>{fmt(perdidaRecomendadaMax)}</strong> (0.5% del capital).
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
-      {/* Placeholder si aún no hay trades */}
-      {account.regla_consistencia && trades.length === 0 && (
-        <div style={{ ...styles.guiaCard, borderColor: 'var(--border)', backgroundColor: 'var(--bg-secondary)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 20 }}>🧠</span>
+      {/* Panel simple para cuentas sin regla de consistencia */}
+      {!account.regla_consistencia && !enRetiro && trades.length > 0 && (
+        <div style={{
+          ...styles.guiaCard,
+          borderColor: isLogrado ? 'rgba(48,209,88,0.25)' : 'rgba(255,255,255,0.1)',
+          backgroundColor: isLogrado ? 'rgba(48,209,88,0.05)' : 'var(--bg-secondary)',
+        }}>
+          <div style={styles.guiaHeader}>
+            <div style={styles.guiaHeaderLeft}>
+              <span style={{ fontSize: 20 }}>{isLogrado ? '🏆' : '📈'}</span>
+              <div>
+                <div style={styles.guiaTitulo}>Progreso de retiro</div>
+                <div style={styles.guiaSubtitulo}>Objetivo: {targetRetiroPct}% · {fmt(targetRetiroUsd)}</div>
+              </div>
+            </div>
+            <div style={{ ...styles.guiaBadge, backgroundColor: isLogrado ? 'rgba(48,209,88,0.15)' : 'rgba(255,255,255,0.07)', color: isLogrado ? '#30d158' : 'var(--text-secondary)' }}>
+              {isLogrado ? 'Listo para retirar' : `${Math.round(progresoPct)}%`}
+            </div>
+          </div>
+          <div style={styles.guiaDivider} />
+          <div style={styles.guiaBloque}>
+            <div style={styles.guiaIcono}>💰</div>
             <div>
-              <div style={styles.guiaTitulo}>Análisis de Gestión</div>
-              <div style={styles.guiaBloqueText}>Registrá tu primer trade para ver las recomendaciones personalizadas.</div>
+              <div style={styles.guiaBloqueTitle}>{isLogrado ? 'Objetivo alcanzado' : 'Acumulado hasta ahora'}</div>
+              <div style={styles.guiaBloqueText}>
+                PnL actual: <strong style={{ color: pnlColor }}>{pnl >= 0 ? '+' : ''}{fmt(pnl)}</strong>.
+                {isLogrado
+                  ? ' Podés parar el trading y solicitar el cobro usando el botón de arriba.'
+                  : <> Faltan <strong style={{ color: 'var(--text-primary)' }}>{fmt(faltaUsd)}</strong> para alcanzar el objetivo de retiro del {targetRetiroPct}%.</>
+                }
+              </div>
+            </div>
+          </div>
+          <div style={styles.guiaBloque}>
+            <div style={styles.guiaIcono}>🔄</div>
+            <div>
+              <div style={styles.guiaBloqueTitle}>Ciclo actual: {cicloActual}</div>
+              <div style={styles.guiaBloqueText}>
+                {historialCiclos.length > 0
+                  ? `Completaste ${historialCiclos.length} ciclo${historialCiclos.length > 1 ? 's' : ''} anteriores. Al iniciar un nuevo ciclo, el balance vuelve a $${inicial.toLocaleString()} y el PnL a $0.`
+                  : 'Al completar el retiro e iniciar un nuevo ciclo, el balance se resetea al inicial y el PnL vuelve a $0.'}
+              </div>
             </div>
           </div>
         </div>
@@ -353,12 +817,14 @@ export default function FundedAccountDetail() {
       <div style={styles.section}>
         <div style={styles.sectionHeader}>
           <h3 style={styles.sectionTitle}>HISTORIAL DE TRADES</h3>
-          <button
-            style={styles.registerBtn}
-            onClick={() => navigate(`/trades/nuevo?accountId=${account.id}&tipo=fondeada`)}
-          >
-            + Registrar Trade
-          </button>
+          {!enRetiro && (
+            <button
+              style={styles.registerBtn}
+              onClick={() => navigate(`/trades/nuevo?accountId=${account.id}&tipo=fondeada`)}
+            >
+              + Registrar Trade
+            </button>
+          )}
         </div>
 
         {trades.length === 0 ? (
@@ -404,6 +870,57 @@ export default function FundedAccountDetail() {
           </div>
         )}
       </div>
+
+      {/* Historial de Ciclos */}
+      {historialCiclos.length > 0 && (
+        <div style={{ marginBottom: '32px' }}>
+          <h3 style={styles.sectionTitle}>HISTORIAL DE CICLOS</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
+            {[...historialCiclos].reverse().map((ciclo, idx) => {
+              const fechaStop = ciclo.fecha_stop
+                ? new Date(ciclo.fecha_stop).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
+                : '—';
+              const fechaCobrado = ciclo.fecha_cobro
+                ? new Date(ciclo.fecha_cobro).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
+                : 'Sin fecha';
+              return (
+                <div key={idx} style={{
+                  backgroundColor: 'var(--bg-secondary)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '16px', padding: '16px 18px',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+                }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ fontSize: '14px', fontWeight: '700' }}>
+                      Ciclo {ciclo.ciclo}
+                      <span style={{
+                        marginLeft: '8px', fontSize: '11px',
+                        color: 'var(--text-secondary)', fontWeight: '500',
+                      }}>
+                        {ciclo.num_trades} trades
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      Stop: {fechaStop} · Cobro: {fechaCobrado}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '2px' }}>
+                      PnL del ciclo
+                    </div>
+                    <div style={{
+                      fontSize: '18px', fontWeight: '800',
+                      color: ciclo.pnl_usd >= 0 ? '#30d158' : '#ff453a',
+                    }}>
+                      {ciclo.pnl_usd >= 0 ? '+' : ''}${ciclo.pnl_usd.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -485,5 +1002,17 @@ const styles = {
   guiaIcono: { fontSize: '18px', flexShrink: 0, marginTop: '1px' },
   guiaBloqueTitle: { fontSize: '13px', fontWeight: '600', marginBottom: '4px' },
   guiaBloqueText: { fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.55' },
+
+  // ── Risk Manager ─────────────────────────────────────────
+  rmEligRow: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    padding: '10px 14px', backgroundColor: 'var(--bg-secondary)',
+    borderBottom: '1px solid var(--border)',
+  },
+  rmEligLabel: { fontSize: '13px', fontWeight: '500', color: 'var(--text-secondary)' },
+  rmStatusBadge: {
+    fontSize: '11px', fontWeight: '600', padding: '3px 10px',
+    borderRadius: '10px', whiteSpace: 'nowrap',
+  },
 };
 

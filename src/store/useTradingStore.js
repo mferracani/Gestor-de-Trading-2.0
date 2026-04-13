@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { collection, query, where, getDocs, getDoc, doc, writeBatch } from 'firebase/firestore';
+import { collection, query, where, getDocs, getDoc, doc, writeBatch, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
 export const useTradingStore = create((set) => ({
@@ -209,5 +209,51 @@ export const useTradingStore = create((set) => ({
       console.error('Error registrando trade fondeada:', error);
       throw error;
     }
-  }
+  },
+
+  stopParaRetiro: async (accountId, fechaCobro) => {
+    const accountRef = doc(db, 'funded_accounts', accountId);
+    const snap = await getDoc(accountRef);
+    if (!snap.exists()) throw new Error('Cuenta no encontrada');
+    const data = snap.data();
+    if (data.en_retiro) throw new Error('La cuenta ya está en proceso de retiro');
+    await updateDoc(accountRef, {
+      en_retiro: true,
+      fecha_cobro: fechaCobro || null,
+      fecha_stop_retiro: new Date().toISOString(),
+    });
+    return { success: true };
+  },
+
+  iniciarNuevoCiclo: async (accountId) => {
+    const accountRef = doc(db, 'funded_accounts', accountId);
+    const snap = await getDoc(accountRef);
+    if (!snap.exists()) throw new Error('Cuenta no encontrada');
+    const data = snap.data();
+    if (!data.en_retiro) throw new Error('La cuenta no está en proceso de retiro');
+
+    const tradesSnap = await getDocs(
+      query(collection(db, 'trades'), where('account_id', '==', accountId))
+    );
+
+    const cicloEntry = {
+      ciclo: data.ciclo_actual ?? 1,
+      pnl_usd: data.pnl_acumulado_usd ?? 0,
+      balance_inicial_usd: data.balance_inicial_usd ?? 0,
+      fecha_stop: data.fecha_stop_retiro ?? new Date().toISOString(),
+      fecha_cobro: data.fecha_cobro ?? null,
+      num_trades: tradesSnap.size,
+    };
+
+    await updateDoc(accountRef, {
+      balance_actual_usd: data.balance_inicial_usd,
+      pnl_acumulado_usd: 0,
+      en_retiro: false,
+      fecha_cobro: null,
+      fecha_stop_retiro: null,
+      ciclo_actual: (data.ciclo_actual ?? 1) + 1,
+      historial_ciclos: [...(data.historial_ciclos ?? []), cicloEntry],
+    });
+    return { success: true };
+  },
 }));
