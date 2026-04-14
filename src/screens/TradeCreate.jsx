@@ -1,8 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { ArrowLeft, Loader2 } from 'lucide-react';
+import { doc, getDoc } from 'firebase/firestore';
 import { useTradingStore } from '../store/useTradingStore';
 import { useToast } from '../components/ui/Toast';
+import { db } from '../lib/firebase';
+import { buildTradeFinancials, inferCommissionProfile, getCommissionPerSide } from '../lib/tradeMath';
 
 export default function TradeCreate() {
   const navigate = useNavigate();
@@ -12,13 +15,50 @@ export default function TradeCreate() {
   
   const toast = useToast();
   const [loading, setLoading] = useState(false);
+  const [account, setAccount] = useState(null);
   
   const [formData, setFormData] = useState({
     activo: 'EURUSD',
+    lotes: '',
     resultado: 'WIN', // WIN | LOSS | BE
-    pnl_usd: '',
+    gross_pnl_usd: '',
+    comision_usd: '',
+    swap_usd: '',
     notas: ''
   });
+
+  useEffect(() => {
+    async function loadAccount() {
+      if (!accountId) return;
+      try {
+        const collectionName = tipo === 'fondeada' ? 'funded_accounts' : 'accounts';
+        const snap = await getDoc(doc(db, collectionName, accountId));
+        if (snap.exists()) setAccount({ id: snap.id, ...snap.data() });
+      } catch (err) {
+        console.error('Error cargando cuenta para estimar comisión:', err);
+      }
+    }
+
+    loadAccount();
+  }, [accountId, tipo]);
+
+  const normalizedGross = (() => {
+    const raw = Number(formData.gross_pnl_usd || 0);
+    if (formData.resultado === 'LOSS') return -Math.abs(raw);
+    if (formData.resultado === 'BE') return 0;
+    return Math.abs(raw);
+  })();
+
+  const tradePreview = buildTradeFinancials({
+    gross_pnl_usd: normalizedGross,
+    lotes: formData.lotes,
+    comision_usd: formData.comision_usd,
+    swap_usd: formData.swap_usd,
+    activo: formData.activo,
+  }, account);
+
+  const profile = inferCommissionProfile(account || {});
+  const perSide = getCommissionPerSide(account || {});
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -29,22 +69,15 @@ export default function TradeCreate() {
     
     setLoading(true);
     try {
-      let finalPnl = Number(formData.pnl_usd || 0);
-      
-      if (formData.resultado === 'LOSS') {
-        finalPnl = -Math.abs(finalPnl);
-      } else if (formData.resultado === 'BE') {
-        finalPnl = 0;
-      } else {
-        finalPnl = Math.abs(finalPnl);
-      }
-
       // 1. Usar el store global — elegir función según tipo de cuenta
       const { registerTrade, registerFundedTrade } = useTradingStore.getState();
       const tradeData = {
         activo: formData.activo,
+        lotes: formData.lotes === '' ? null : Number(formData.lotes),
         resultado: formData.resultado,
-        pnl_usd: finalPnl,
+        gross_pnl_usd: normalizedGross,
+        comision_usd: formData.comision_usd === '' ? null : Number(formData.comision_usd),
+        swap_usd: formData.swap_usd === '' ? null : Number(formData.swap_usd),
         notas: formData.notas
       };
 
@@ -104,6 +137,21 @@ export default function TradeCreate() {
         </div>
 
         <div style={styles.inputGroup}>
+          <label style={styles.label}>Lotes (Opcional)</label>
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Ej: 1.00"
+            value={formData.lotes}
+            onChange={e => setFormData({...formData, lotes: e.target.value})}
+            style={styles.input}
+          />
+          <span style={styles.helperText}>
+            Si lo cargás, la app puede estimar sola la comisión de brokers que cobran por lote.
+          </span>
+        </div>
+
+        <div style={styles.inputGroup}>
           <label style={styles.label}>Resultado</label>
           <div style={styles.optionsGrid}>
             <div 
@@ -142,22 +190,73 @@ export default function TradeCreate() {
           </div>
         </div>
 
-        {formData.resultado !== 'BE' && (
+        <div style={styles.inputGroup}>
+          <label style={styles.label}>
+            PnL Bruto (USD) {formData.resultado === 'LOSS' ? 'en negativo de forma automática' : ''}
+          </label>
+          <input
+            type="number"
+            required={formData.resultado !== 'BE'}
+            step="0.01"
+            placeholder={formData.resultado === 'BE' ? '0' : 'Ej: 500'}
+            value={formData.gross_pnl_usd}
+            onChange={e => setFormData({...formData, gross_pnl_usd: e.target.value})}
+            style={styles.input}
+          />
+          <span style={styles.helperText}>
+            Cargá el beneficio o pérdida antes de comisiones y swap.
+          </span>
+        </div>
+
+        <div style={styles.inlineGrid}>
           <div style={styles.inputGroup}>
-            <label style={styles.label}>
-              PnL (USD) {formData.resultado === 'LOSS' ? 'en negativo de forma automática' : ''}
-            </label>
-            <input 
+            <label style={styles.label}>Comisión (USD)</label>
+            <input
               type="number"
-              required
               step="0.01"
-              placeholder="Ej: 500" 
-              value={formData.pnl_usd}
-              onChange={e => setFormData({...formData, pnl_usd: e.target.value})}
+              min="0"
+              placeholder={tradePreview.estimatedCommission > 0 ? tradePreview.estimatedCommission.toFixed(2) : 'Se estima automática si aplica'}
+              value={formData.comision_usd}
+              onChange={e => setFormData({...formData, comision_usd: e.target.value})}
+              style={styles.input}
+            />
+            <span style={styles.helperText}>
+              Si lo dejás vacío, usamos la estimación automática y después la podés corregir.
+            </span>
+          </div>
+
+          <div style={styles.inputGroup}>
+            <label style={styles.label}>Swap (USD)</label>
+            <input
+              type="number"
+              step="0.01"
+              placeholder="Ej: -1.25 o 0.80"
+              value={formData.swap_usd}
+              onChange={e => setFormData({...formData, swap_usd: e.target.value})}
               style={styles.input}
             />
           </div>
-        )}
+        </div>
+
+        <div style={styles.netCard}>
+          <div style={styles.netLabel}>Impacto real en la cuenta</div>
+          <div style={{
+            ...styles.netValue,
+            color: tradePreview.netPnl > 0 ? '#30d158' : tradePreview.netPnl < 0 ? '#ff453a' : 'var(--text-primary)'
+          }}>
+            {tradePreview.netPnl > 0 ? '+' : ''}${tradePreview.netPnl.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+          <div style={styles.netBreakdown}>
+            Bruto {tradePreview.grossPnl > 0 ? '+' : ''}${tradePreview.grossPnl.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {' '}· Comisión -${tradePreview.commission.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {' '}· Swap {tradePreview.swap > 0 ? '+' : ''}${tradePreview.swap.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+          <div style={styles.netHint}>
+            {tradePreview.commissionSource === 'manual' && 'Comisión cargada manualmente.'}
+            {tradePreview.commissionSource === 'auto' && `Comisión estimada automáticamente (${profile === 'alpha_raw' ? `Alpha Capital RAW · $${perSide.toFixed(2)} por lado` : 'perfil por lote'}).`}
+            {tradePreview.commissionSource === 'none' && 'Sin comisión calculada por ahora. Podés dejarla así y ajustarla después.'}
+          </div>
+        </div>
 
         <div style={styles.inputGroup}>
           <label style={styles.label}>Notas u Observaciones (Opcional)</label>
@@ -190,11 +289,17 @@ const styles = {
   iconButton: { backgroundColor: 'transparent', border: 'none', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'flex-start', cursor: 'pointer', padding: 0 },
   form: { display: 'flex', flexDirection: 'column', gap: '24px' },
   inputGroup: { display: 'flex', flexDirection: 'column', gap: '8px' },
+  inlineGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' },
   label: { fontSize: '14px', color: 'var(--text-secondary)', fontWeight: '500' },
   input: { backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', padding: '16px', borderRadius: '16px', fontSize: '16px', outline: 'none' },
   inputArea: { backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', padding: '16px', borderRadius: '16px', fontSize: '16px', outline: 'none', resize: 'vertical' },
+  helperText: { fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.4' },
   optionsGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' },
   option: { padding: '13px 0', textAlign: 'center', borderRadius: '14px', fontWeight: '700', cursor: 'pointer', fontSize: '14px', transition: 'all 0.2s', letterSpacing: '0.3px' },
+  netCard: { backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: '16px', padding: '16px' },
+  netLabel: { fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' },
+  netValue: { fontSize: '28px', fontWeight: '800', letterSpacing: '-0.5px' },
+  netBreakdown: { marginTop: '6px', fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.5' },
+  netHint: { marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.45' },
   submitBtn: { backgroundColor: 'var(--accent-blue)', color: '#fff', border: 'none', borderRadius: '14px', padding: '14px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', marginTop: '8px' }
 };
-

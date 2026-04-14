@@ -7,7 +7,7 @@ import { useToast } from '../components/ui/Toast';
 
 export default function FundedAccountCreate() {
   const navigate = useNavigate();
-  const { addToast } = useToast();
+  const addToast = useToast();
 
   const [form, setForm] = useState({
     nombre: '',
@@ -16,6 +16,8 @@ export default function FundedAccountCreate() {
     objetivo_retiro_pct: 2,
     regla_consistencia: true,
     consistencia_pct: 40,
+    commission_profile: 'alpha_raw',
+    commission_per_side_usd: 2.5,
     notas: '',
   });
   const [saving, setSaving] = useState(false);
@@ -39,6 +41,10 @@ export default function FundedAccountCreate() {
         objetivo_retiro_pct: parseFloat(form.objetivo_retiro_pct) || 2,
         regla_consistencia: form.regla_consistencia,
         consistencia_pct: form.regla_consistencia ? (parseFloat(form.consistencia_pct) || 40) : null,
+        commission_profile: form.commission_profile,
+        commission_per_side_usd: form.commission_profile === 'custom_per_lot'
+          ? (parseFloat(form.commission_per_side_usd) || 0)
+          : (form.commission_profile === 'alpha_raw' ? 2.5 : 0),
         notas: form.notas.trim(),
         estado: 'activo',
         user_id: 'user_test_123',
@@ -101,6 +107,56 @@ export default function FundedAccountCreate() {
             onChange={e => handleChange('balance_inicial_usd', e.target.value)}
           />
         </div>
+
+        <div style={styles.field}>
+          <label style={styles.label}>Comisión automática</label>
+          <p style={styles.fieldHint}>
+            Se usa para estimar la comisión al cargar trades. Después siempre la podés editar trade por trade.
+          </p>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            {[
+              { key: 'alpha_raw', title: 'Alpha RAW', subtitle: '$2.50 por lado · índices sin comisión' },
+              { key: 'custom_per_lot', title: 'Personalizada', subtitle: 'Por lote y por lado' },
+              { key: 'none', title: 'Sin comisión', subtitle: 'No calcular automáticamente' },
+            ].map(option => (
+              <button
+                key={option.key}
+                style={{
+                  flex: 1,
+                  minWidth: '140px',
+                  padding: '14px 12px',
+                  borderRadius: '14px',
+                  cursor: 'pointer',
+                  border: form.commission_profile === option.key ? '2px solid var(--accent-blue)' : '1px solid var(--border)',
+                  backgroundColor: form.commission_profile === option.key ? 'rgba(10,132,255,0.1)' : 'var(--bg-secondary)',
+                  textAlign: 'left',
+                }}
+                onClick={() => handleChange('commission_profile', option.key)}
+              >
+                <div style={{ fontSize: '14px', fontWeight: '700', color: form.commission_profile === option.key ? 'var(--accent-blue)' : 'var(--text-primary)', marginBottom: '4px' }}>
+                  {option.title}
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                  {option.subtitle}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {form.commission_profile === 'custom_per_lot' && (
+          <div style={styles.field}>
+            <label style={styles.label}>Comisión por lado (USD)</label>
+            <input
+              style={styles.input}
+              type="number"
+              step="0.01"
+              placeholder="Ej: 2.50"
+              value={form.commission_per_side_usd}
+              onChange={e => handleChange('commission_per_side_usd', e.target.value)}
+            />
+          </div>
+        )}
 
         {/* Target de retiro */}
         <div style={styles.field}>

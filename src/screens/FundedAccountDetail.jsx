@@ -1,16 +1,17 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { ArrowLeft, Archive, TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, query, where, getDocs, arrayUnion } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useToast } from '../components/ui/Toast';
 import { useTradingStore } from '../store/useTradingStore';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { buildTradeFinancials, getCommissionPerSide, getTradeNetPnl, inferCommissionProfile } from '../lib/tradeMath';
 
 export default function FundedAccountDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { addToast } = useToast();
+  const addToast = useToast();
 
   const [account, setAccount] = useState(null);
   const [trades, setTrades] = useState([]);
@@ -19,13 +20,26 @@ export default function FundedAccountDetail() {
   const [fechaCobro, setFechaCobro] = useState('');
   const [savingStop, setSavingStop] = useState(false);
   const [savingCiclo, setSavingCiclo] = useState(false);
+  const [showBalanceAdjust, setShowBalanceAdjust] = useState(false);
+  const [adjustedBalance, setAdjustedBalance] = useState('');
+  const [adjustmentNote, setAdjustmentNote] = useState('');
+  const [savingAdjustment, setSavingAdjustment] = useState(false);
+  const [showCommissionSettings, setShowCommissionSettings] = useState(false);
+  const [commissionProfile, setCommissionProfile] = useState('alpha_raw');
+  const [commissionPerSide, setCommissionPerSide] = useState('2.5');
+  const [savingCommissionConfig, setSavingCommissionConfig] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const docRef = doc(db, 'funded_accounts', id);
       const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) setAccount({ id: docSnap.id, ...docSnap.data() });
+      if (docSnap.exists()) {
+        const nextAccount = { id: docSnap.id, ...docSnap.data() };
+        setAccount(nextAccount);
+        setCommissionProfile(inferCommissionProfile(nextAccount));
+        setCommissionPerSide(String(getCommissionPerSide(nextAccount) || 2.5));
+      }
 
       const qTrades = query(collection(db, 'trades'), where('account_id', '==', id));
       const tradesSnap = await getDocs(qTrades);
@@ -78,6 +92,62 @@ export default function FundedAccountDetail() {
     setSavingCiclo(false);
   };
 
+  const handleBalanceAdjust = async () => {
+    const nextBalance = Number(adjustedBalance);
+    if (!Number.isFinite(nextBalance) || nextBalance <= 0) {
+      addToast('Ingresá un balance válido.', 'warning');
+      return;
+    }
+
+    setSavingAdjustment(true);
+    try {
+      const newPnl = nextBalance - inicial;
+      const adjustment = {
+        fecha: new Date().toISOString(),
+        balance_anterior_usd: balance,
+        balance_nuevo_usd: nextBalance,
+        diferencia_usd: nextBalance - balance,
+        nota: adjustmentNote.trim() || null,
+      };
+
+      await updateDoc(doc(db, 'funded_accounts', account.id), {
+        balance_actual_usd: nextBalance,
+        pnl_acumulado_usd: newPnl,
+        historial_ajustes_balance: arrayUnion(adjustment),
+      });
+
+      setAccount(prev => ({ ...prev, balance_actual_usd: nextBalance, pnl_acumulado_usd: newPnl }));
+      setShowBalanceAdjust(false);
+      setAdjustmentNote('');
+      addToast('Balance ajustado correctamente.', 'success');
+    } catch (err) {
+      console.error('Error ajustando balance:', err);
+      addToast('No pude ajustar el balance.', 'error');
+    }
+    setSavingAdjustment(false);
+  };
+
+  const handleSaveCommissionConfig = async () => {
+    setSavingCommissionConfig(true);
+    try {
+      const payload = {
+        commission_profile: commissionProfile,
+        commission_per_side_usd: commissionProfile === 'custom_per_lot'
+          ? (Number(commissionPerSide) || 0)
+          : (commissionProfile === 'alpha_raw' ? 2.5 : 0),
+      };
+
+      await updateDoc(doc(db, 'funded_accounts', account.id), payload);
+      setAccount(prev => ({ ...prev, ...payload }));
+      setShowCommissionSettings(false);
+      addToast('Configuración de comisiones actualizada.', 'success');
+    } catch (err) {
+      console.error('Error guardando configuración de comisiones:', err);
+      addToast('No pude guardar la configuración.', 'error');
+    }
+    setSavingCommissionConfig(false);
+  };
+
   if (loading) return <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-secondary)' }}>Cargando cuenta...</div>;
   if (!account) return <div style={{ padding: 24, textAlign: 'center', color: 'var(--accent-red)' }}>Cuenta no encontrada.</div>;
 
@@ -109,7 +179,7 @@ export default function FundedAccountDetail() {
   const limitePct = account.consistencia_pct || 40;
   const tradesByDay = trades.reduce((acc, t) => {
     const day = (t.fecha || '').slice(0, 10);
-    acc[day] = (acc[day] || 0) + (t.pnl_usd || 0);
+    acc[day] = (acc[day] || 0) + getTradeNetPnl(t);
     return acc;
   }, {});
   const dailyPnls = Object.values(tradesByDay);
@@ -242,6 +312,126 @@ export default function FundedAccountDetail() {
           <div style={styles.gridLabel}>Win Rate</div>
           <div style={styles.gridValue}>{winRate}%</div>
         </div>
+      </div>
+
+      <div style={styles.toolsCard}>
+        <div style={styles.toolsHeader}>
+          <div>
+            <div style={styles.toolsTitle}>Ajustes de cuenta</div>
+            <div style={styles.toolsSubtitle}>
+              Sincronizá el balance real y definí cómo estimar la comisión automática.
+            </div>
+          </div>
+          <div style={styles.toolsBadges}>
+            <span style={styles.toolBadge}>
+              Comisión: {commissionProfile === 'alpha_raw' ? 'Alpha RAW' : commissionProfile === 'custom_per_lot' ? 'Personalizada' : 'Sin comisión'}
+            </span>
+          </div>
+        </div>
+
+        <div style={styles.toolsActions}>
+          <button
+            style={styles.secondaryActionBtn}
+            onClick={() => {
+              setAdjustedBalance(String(balance));
+              setShowBalanceAdjust(v => !v);
+            }}
+          >
+            Ajustar balance
+          </button>
+          <button
+            style={styles.secondaryActionBtn}
+            onClick={() => setShowCommissionSettings(v => !v)}
+          >
+            Configurar comisión
+          </button>
+        </div>
+
+        {showBalanceAdjust && (
+          <div style={styles.actionPanel}>
+            <div style={styles.panelTitle}>Ajuste manual de balance</div>
+            <div style={styles.panelHint}>
+              Esto actualiza el balance y recalcula el PnL acumulado sin crear un trade nuevo.
+            </div>
+            <input
+              type="number"
+              step="0.01"
+              value={adjustedBalance}
+              onChange={e => setAdjustedBalance(e.target.value)}
+              style={styles.panelInput}
+              placeholder="Ej: 10294.82"
+            />
+            <textarea
+              rows="2"
+              value={adjustmentNote}
+              onChange={e => setAdjustmentNote(e.target.value)}
+              style={{ ...styles.panelInput, resize: 'vertical', minHeight: '76px' }}
+              placeholder="Nota opcional: ajuste por comisión, corrección manual, etc."
+            />
+            <div style={styles.panelActions}>
+              <button style={styles.panelGhostBtn} onClick={() => setShowBalanceAdjust(false)}>
+                Cancelar
+              </button>
+              <button style={styles.panelPrimaryBtn} onClick={handleBalanceAdjust} disabled={savingAdjustment}>
+                {savingAdjustment ? 'Guardando...' : 'Guardar ajuste'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {showCommissionSettings && (
+          <div style={styles.actionPanel}>
+            <div style={styles.panelTitle}>Configuración de comisión automática</div>
+            <div style={styles.panelHint}>
+              Se usa como valor por defecto al crear trades. Después siempre podés sobrescribirla manualmente.
+            </div>
+
+            <div style={styles.profileGrid}>
+              {[
+                { key: 'alpha_raw', title: 'Alpha RAW', subtitle: '$2.50 por lado y por lote. Índices sin comisión.' },
+                { key: 'custom_per_lot', title: 'Personalizada', subtitle: 'Definís cuánto cobra por lado y por lote.' },
+                { key: 'none', title: 'Sin comisión', subtitle: 'No estimar automáticamente.' },
+              ].map(option => (
+                <button
+                  key={option.key}
+                  style={{
+                    ...styles.profileOption,
+                    border: commissionProfile === option.key ? '2px solid var(--accent-blue)' : '1px solid var(--border)',
+                    backgroundColor: commissionProfile === option.key ? 'rgba(10,132,255,0.1)' : 'var(--bg-secondary)',
+                  }}
+                  onClick={() => setCommissionProfile(option.key)}
+                >
+                  <div style={{ fontSize: '13px', fontWeight: '700', color: commissionProfile === option.key ? 'var(--accent-blue)' : 'var(--text-primary)', marginBottom: '4px' }}>
+                    {option.title}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                    {option.subtitle}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {commissionProfile === 'custom_per_lot' && (
+              <input
+                type="number"
+                step="0.01"
+                value={commissionPerSide}
+                onChange={e => setCommissionPerSide(e.target.value)}
+                style={styles.panelInput}
+                placeholder="Comisión por lado y por lote"
+              />
+            )}
+
+            <div style={styles.panelActions}>
+              <button style={styles.panelGhostBtn} onClick={() => setShowCommissionSettings(false)}>
+                Cancelar
+              </button>
+              <button style={styles.panelPrimaryBtn} onClick={handleSaveCommissionConfig} disabled={savingCommissionConfig}>
+                {savingCommissionConfig ? 'Guardando...' : 'Guardar configuración'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Progreso de retiro */}
@@ -770,7 +960,7 @@ export default function FundedAccountDetail() {
         const sorted = [...trades].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
         const equityData = sorted.reduce((acc, t) => {
           const prev = acc.length > 0 ? acc[acc.length - 1].pnl : 0;
-          const cumPnl = prev + (t.pnl_usd || 0);
+          const cumPnl = prev + getTradeNetPnl(t);
           const d = new Date(t.fecha);
           const label = `${d.getDate()}/${d.getMonth() + 1}`;
           return [...acc, { label, pnl: Number(cumPnl.toFixed(2)) }];
@@ -836,7 +1026,7 @@ export default function FundedAccountDetail() {
             {trades.map(trade => {
               const isWin = trade.resultado === 'WIN';
               const isLoss = trade.resultado === 'LOSS';
-              const pnl = trade.pnl_usd || 0;
+              const { grossPnl, commission, swap, netPnl } = buildTradeFinancials(trade);
               const fecha = trade.fecha
                 ? new Date(trade.fecha).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
                 : '—';
@@ -857,12 +1047,27 @@ export default function FundedAccountDetail() {
                       <span style={{ color: 'var(--text-muted)' }}>·</span>
                       <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{fecha}</span>
                     </div>
+                    {(commission > 0 || swap !== 0 || trade.gross_pnl_usd != null) && (
+                      <div style={styles.tradeMeta}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                          Bruto {grossPnl > 0 ? '+' : ''}${grossPnl.toLocaleString()}
+                        </span>
+                        <span style={{ color: 'var(--text-muted)' }}>·</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                          Com. -${commission.toLocaleString()}
+                        </span>
+                        <span style={{ color: 'var(--text-muted)' }}>·</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                          Swap {swap > 0 ? '+' : ''}${swap.toLocaleString()}
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <div style={{
                     ...styles.tradePnl,
                     color: isWin ? '#30d158' : isLoss ? '#ff453a' : 'var(--text-muted)'
                   }}>
-                    {pnl === 0 ? 'B.E.' : `${pnl > 0 ? '+' : ''}$${pnl.toLocaleString()}`}
+                    {netPnl === 0 ? 'B.E.' : `${netPnl > 0 ? '+' : ''}$${netPnl.toLocaleString()}`}
                   </div>
                 </div>
               );
@@ -946,6 +1151,53 @@ const styles = {
   gridCell: { padding: '16px 18px', backgroundColor: 'var(--bg-secondary)' },
   gridLabel: { fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' },
   gridValue: { fontSize: '20px', fontWeight: '700' },
+  toolsCard: {
+    backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)',
+    borderRadius: '16px', padding: '18px', marginBottom: '16px',
+    display: 'flex', flexDirection: 'column', gap: '14px',
+  },
+  toolsHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' },
+  toolsTitle: { fontSize: '14px', fontWeight: '700', marginBottom: '4px' },
+  toolsSubtitle: { fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.45' },
+  toolsBadges: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' },
+  toolBadge: {
+    fontSize: '11px', fontWeight: '700', color: 'var(--accent-blue)',
+    backgroundColor: 'rgba(10,132,255,0.1)', padding: '5px 10px',
+    borderRadius: '999px', textTransform: 'uppercase', letterSpacing: '0.4px',
+  },
+  toolsActions: { display: 'flex', gap: '10px', flexWrap: 'wrap' },
+  secondaryActionBtn: {
+    backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+    color: 'var(--text-primary)', borderRadius: '12px', padding: '10px 14px',
+    fontSize: '13px', fontWeight: '600', cursor: 'pointer',
+  },
+  actionPanel: {
+    backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+    borderRadius: '14px', padding: '14px', display: 'flex',
+    flexDirection: 'column', gap: '12px',
+  },
+  panelTitle: { fontSize: '14px', fontWeight: '700' },
+  panelHint: { fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.45' },
+  panelInput: {
+    backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)',
+    color: 'var(--text-primary)', borderRadius: '12px', padding: '12px 14px',
+    fontSize: '14px', outline: 'none',
+  },
+  panelActions: { display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' },
+  panelGhostBtn: {
+    backgroundColor: 'transparent', border: '1px solid var(--border)',
+    color: 'var(--text-secondary)', borderRadius: '12px', padding: '10px 14px',
+    fontSize: '13px', fontWeight: '600', cursor: 'pointer',
+  },
+  panelPrimaryBtn: {
+    backgroundColor: 'var(--accent-blue)', border: 'none',
+    color: '#fff', borderRadius: '12px', padding: '10px 14px',
+    fontSize: '13px', fontWeight: '700', cursor: 'pointer',
+  },
+  profileGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' },
+  profileOption: {
+    padding: '14px 12px', borderRadius: '14px', cursor: 'pointer', textAlign: 'left',
+  },
   retiroCard: {
     backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)',
     borderRadius: '16px', padding: '20px', marginBottom: '16px',
@@ -1015,4 +1267,3 @@ const styles = {
     borderRadius: '10px', whiteSpace: 'nowrap',
   },
 };
-

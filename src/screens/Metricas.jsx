@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { getTradeNetPnl } from '../lib/tradeMath';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell
@@ -69,10 +70,11 @@ export default function Metricas() {
   // 1. Curva de equity acumulada
   const equityCurve = trades.reduce((acc, t) => {
     const prev = acc.length > 0 ? acc[acc.length - 1].pnl : 0;
-    const cumPnl = prev + (t.pnl_usd || 0);
+    const tradePnl = getTradeNetPnl(t);
+    const cumPnl = prev + tradePnl;
     const d = new Date(t.fecha);
     const label = `${d.getDate()}/${d.getMonth() + 1}`;
-    return [...acc, { label, pnl: cumPnl, trade_pnl: t.pnl_usd || 0 }];
+    return [...acc, { label, pnl: cumPnl, trade_pnl: tradePnl }];
   }, []);
 
   // 2. Estadísticas generales
@@ -81,15 +83,15 @@ export default function Metricas() {
   const losses = trades.filter(t => t.resultado === 'LOSS');
   const be = trades.filter(t => t.resultado === 'BE' || t.resultado === 'B.E.');
   const winRate = Math.round((wins.length / totalTrades) * 100);
-  const totalPnl = trades.reduce((acc, t) => acc + (t.pnl_usd || 0), 0);
-  const avgWin = wins.length > 0 ? wins.reduce((a, t) => a + t.pnl_usd, 0) / wins.length : 0;
-  const avgLoss = losses.length > 0 ? losses.reduce((a, t) => a + t.pnl_usd, 0) / losses.length : 0;
+  const totalPnl = trades.reduce((acc, t) => acc + getTradeNetPnl(t), 0);
+  const avgWin = wins.length > 0 ? wins.reduce((a, t) => a + getTradeNetPnl(t), 0) / wins.length : 0;
+  const avgLoss = losses.length > 0 ? losses.reduce((a, t) => a + getTradeNetPnl(t), 0) / losses.length : 0;
   const expectancy = (winRate / 100) * avgWin + ((100 - winRate) / 100) * avgLoss;
 
   // Max drawdown
   let peak = 0; let maxDD = 0; let running = 0;
   for (const t of trades) {
-    running += t.pnl_usd || 0;
+    running += getTradeNetPnl(t);
     if (running > peak) peak = running;
     const dd = peak - running;
     if (dd > maxDD) maxDD = dd;
@@ -98,7 +100,7 @@ export default function Metricas() {
   // 5. Win vs Loss Analysis — Promedios en % del balance de cada cuenta
   const getTradeBalancePct = (t) => {
     const bal = accountsMap[t.account_id] || 10000;
-    return ((t.pnl_usd || 0) / bal) * 100;
+    return (getTradeNetPnl(t) / bal) * 100;
   };
 
   const avgWinPct = wins.length > 0 ? wins.reduce((a, t) => a + getTradeBalancePct(t), 0) / wins.length : 0;
@@ -265,7 +267,7 @@ export default function Metricas() {
   for (const t of trades) {
     const key = t.activo || 'OTHER';
     if (!byAsset[key]) byAsset[key] = 0;
-    byAsset[key] += t.pnl_usd || 0;
+    byAsset[key] += getTradeNetPnl(t);
   }
   const assetData = Object.entries(byAsset)
     .map(([asset, pnl]) => ({ asset, pnl }))

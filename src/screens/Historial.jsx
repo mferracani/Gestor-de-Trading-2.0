@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { TrendingUp, TrendingDown, Minus, Filter } from 'lucide-react';
+import { buildTradeFinancials, getTradeNetPnl } from '../lib/tradeMath';
 
 const FILTERS = ['Todos', 'WIN', 'LOSS', 'B.E.'];
 
@@ -46,7 +47,7 @@ export default function Historial() {
   });
 
   // Estadísticas del top
-  const totalPnl = trades.reduce((acc, t) => acc + (t.pnl_usd || 0), 0);
+  const totalPnl = trades.reduce((acc, t) => acc + getTradeNetPnl(t), 0);
   const wins = trades.filter(t => t.resultado === 'WIN').length;
   const losses = trades.filter(t => t.resultado === 'LOSS').length;
   const winRate = trades.length > 0 ? Math.round((wins / trades.length) * 100) : 0;
@@ -123,7 +124,7 @@ export default function Historial() {
           {filteredTrades.map(trade => {
             const isWin = trade.resultado === 'WIN';
             const isLoss = trade.resultado === 'LOSS';
-            const pnl = trade.pnl_usd || 0;
+            const { grossPnl, commission, swap, netPnl } = buildTradeFinancials(trade);
             const accountName = accounts[trade.account_id]?.nombre || `Cuenta ${trade.account_id?.slice(-4)}`;
             const fecha = trade.fecha
               ? new Date(trade.fecha).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
@@ -149,6 +150,21 @@ export default function Historial() {
                     <span style={{ color: 'var(--text-muted)' }}>·</span>
                     <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{fecha}</span>
                   </div>
+                  {(commission > 0 || swap !== 0 || trade.gross_pnl_usd != null) && (
+                    <div style={styles.tradeMeta}>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                        Bruto {grossPnl > 0 ? '+' : ''}${grossPnl.toLocaleString()}
+                      </span>
+                      <span style={{ color: 'var(--text-muted)' }}>·</span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                        Com. -${commission.toLocaleString()}
+                      </span>
+                      <span style={{ color: 'var(--text-muted)' }}>·</span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                        Swap {swap > 0 ? '+' : ''}${swap.toLocaleString()}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* PnL */}
@@ -156,7 +172,7 @@ export default function Historial() {
                   ...styles.tradePnl,
                   color: isWin ? '#30d158' : isLoss ? '#ff453a' : 'var(--text-muted)'
                 }}>
-                  {pnl === 0 ? 'B.E.' : `${pnl > 0 ? '+' : ''}$${pnl.toLocaleString()}`}
+                  {netPnl === 0 ? 'B.E.' : `${netPnl > 0 ? '+' : ''}$${netPnl.toLocaleString()}`}
                 </div>
               </div>
             );

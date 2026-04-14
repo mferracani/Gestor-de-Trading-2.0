@@ -6,12 +6,13 @@ import { db } from '../lib/firebase';
 import { useTradingStore } from '../store/useTradingStore';
 import { useToast } from '../components/ui/Toast';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { buildTradeFinancials, getTradeNetPnl } from '../lib/tradeMath';
 
 export default function ChallengeDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { fetchAccounts } = useTradingStore();
-  const { addToast } = useToast();
+  const addToast = useToast();
 
   const [account, setAccount] = useState(null);
   const [trades, setTrades] = useState([]);
@@ -201,7 +202,7 @@ export default function ChallengeDetail() {
         const sorted = [...trades].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
         const equityData = sorted.reduce((acc, t) => {
           const prev = acc.length > 0 ? acc[acc.length - 1].pnl : 0;
-          const cumPnl = prev + (t.pnl_usd || 0);
+          const cumPnl = prev + getTradeNetPnl(t);
           const d = new Date(t.fecha);
           const label = `${d.getDate()}/${d.getMonth() + 1}`;
           return [...acc, { label, pnl: Number(cumPnl.toFixed(2)) }];
@@ -259,7 +260,7 @@ export default function ChallengeDetail() {
             {trades.map(trade => {
               const isWin = trade.resultado === 'WIN';
               const isLoss = trade.resultado === 'LOSS';
-              const pnl = trade.pnl_usd || 0;
+              const { grossPnl, commission, swap, netPnl } = buildTradeFinancials(trade);
               const fecha = trade.fecha
                 ? new Date(trade.fecha).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
                 : '—';
@@ -280,12 +281,27 @@ export default function ChallengeDetail() {
                       <span style={{ color: 'var(--text-muted)' }}>·</span>
                       <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{fecha}</span>
                     </div>
+                    {(commission > 0 || swap !== 0 || trade.gross_pnl_usd != null) && (
+                      <div style={styles.tradeMeta}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                          Bruto {grossPnl > 0 ? '+' : ''}${grossPnl.toLocaleString()}
+                        </span>
+                        <span style={{ color: 'var(--text-muted)' }}>·</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                          Com. -${commission.toLocaleString()}
+                        </span>
+                        <span style={{ color: 'var(--text-muted)' }}>·</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                          Swap {swap > 0 ? '+' : ''}${swap.toLocaleString()}
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <div style={{
                     ...styles.tradePnl,
                     color: isWin ? '#30d158' : isLoss ? '#ff453a' : 'var(--text-muted)'
                   }}>
-                    {pnl === 0 ? 'B.E.' : `${pnl > 0 ? '+' : ''}$${pnl.toLocaleString()}`}
+                    {netPnl === 0 ? 'B.E.' : `${netPnl > 0 ? '+' : ''}$${netPnl.toLocaleString()}`}
                   </div>
                 </div>
               );

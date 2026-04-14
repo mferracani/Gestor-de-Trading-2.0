@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { collection, query, where, getDocs, getDoc, doc, writeBatch, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { buildTradeFinancials } from '../lib/tradeMath';
 
 export const useTradingStore = create((set) => ({
   activeChallenge: null,
@@ -68,7 +69,8 @@ export const useTradingStore = create((set) => ({
       const account = accounts.find(a => a.id === accountId);
       if (!account) throw new Error("Cuenta no encontrada");
 
-      const finalPnl = Number(tradeData.pnl_usd || 0);
+      const { grossPnl, commission, swap, netPnl, estimatedCommission, commissionSource } = buildTradeFinancials(tradeData, account);
+      const finalPnl = netPnl;
       const newBalance = (account.balance_actual_usd || account.balance_inicial_usd) + finalPnl;
 
       // 1. Evaluar si la cuenta pasa a peligro (danger) o se quema
@@ -99,6 +101,13 @@ export const useTradingStore = create((set) => ({
         ...tradeData,
         user_id: account.user_id || 'user_test_123',
         account_id: account.id,
+        lotes: tradeData.lotes ?? null,
+        gross_pnl_usd: grossPnl,
+        comision_usd: commission,
+        comision_estimada_usd: estimatedCommission,
+        comision_fuente: commissionSource,
+        swap_usd: swap,
+        net_pnl_usd: netPnl,
         pnl_usd: finalPnl,
         fecha: new Date().toISOString()
       });
@@ -168,7 +177,8 @@ export const useTradingStore = create((set) => ({
       if (!accountSnap.exists()) throw new Error('Cuenta no encontrada');
 
       const account = { id: accountSnap.id, ...accountSnap.data() };
-      const finalPnl = Number(tradeData.pnl_usd || 0);
+      const { grossPnl, commission, swap, netPnl, estimatedCommission, commissionSource } = buildTradeFinancials(tradeData, account);
+      const finalPnl = netPnl;
       const inicial = account.balance_inicial_usd || 0;
       const newBalance = (account.balance_actual_usd || inicial) + finalPnl;
       const newPnl = (account.pnl_acumulado_usd || 0) + finalPnl;
@@ -192,6 +202,13 @@ export const useTradingStore = create((set) => ({
         user_id: account.user_id || 'user_test_123',
         account_id: accountId,
         tipo_cuenta: 'fondeada',
+        lotes: tradeData.lotes ?? null,
+        gross_pnl_usd: grossPnl,
+        comision_usd: commission,
+        comision_estimada_usd: estimatedCommission,
+        comision_fuente: commissionSource,
+        swap_usd: swap,
+        net_pnl_usd: netPnl,
         pnl_usd: finalPnl,
         fecha: new Date().toISOString()
       });
