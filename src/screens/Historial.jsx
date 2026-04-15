@@ -150,29 +150,26 @@ export default function Historial() {
                     <span style={{ color: 'var(--text-muted)' }}>·</span>
                     <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{fecha}</span>
                   </div>
-                  {(commission > 0 || swap !== 0 || trade.gross_pnl_usd != null) && (
-                    <div style={styles.tradeMeta}>
-                      <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
-                        Bruto {grossPnl > 0 ? '+' : ''}${grossPnl.toLocaleString()}
-                      </span>
-                      <span style={{ color: 'var(--text-muted)' }}>·</span>
-                      <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
-                        Com. -${commission.toLocaleString()}
-                      </span>
-                      <span style={{ color: 'var(--text-muted)' }}>·</span>
-                      <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
-                        Swap {swap > 0 ? '+' : ''}${swap.toLocaleString()}
-                      </span>
-                    </div>
-                  )}
                 </div>
 
-                {/* PnL */}
-                <div style={{
-                  ...styles.tradePnl,
-                  color: isWin ? '#30d158' : isLoss ? '#ff453a' : 'var(--text-muted)'
-                }}>
-                  {netPnl === 0 ? 'B.E.' : `${netPnl > 0 ? '+' : ''}$${netPnl.toLocaleString()}`}
+                {/* PnL bruto + comisión/swap por debajo */}
+                <div style={styles.tradePnlColumn}>
+                  <div style={{
+                    ...styles.tradePnl,
+                    color: isWin ? '#30d158' : isLoss ? '#ff453a' : 'var(--text-muted)'
+                  }}>
+                    {grossPnl === 0 ? 'B.E.' : `${grossPnl > 0 ? '+' : ''}$${grossPnl.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                  </div>
+                  {commission > 0 && (
+                    <div style={styles.tradeCommission}>
+                      Com. -${commission.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  )}
+                  {swap !== 0 && (
+                    <div style={{ ...styles.tradeCommission, color: swap > 0 ? 'rgba(48,209,88,0.7)' : 'rgba(255,100,90,0.8)' }}>
+                      Swap {swap > 0 ? '+' : ''}${swap.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -297,9 +294,20 @@ const styles = {
     padding: '2px 8px',
     borderRadius: '6px',
   },
+  tradePnlColumn: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    flexShrink: 0,
+    gap: '2px',
+  },
   tradePnl: {
     fontSize: '16px',
     fontWeight: '700',
-    flexShrink: 0,
+  },
+  tradeCommission: {
+    fontSize: '11px',
+    color: 'rgba(255,100,90,0.75)',
+    fontWeight: '500',
   },
 };
