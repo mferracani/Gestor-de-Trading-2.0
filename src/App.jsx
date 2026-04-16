@@ -11,6 +11,7 @@ import FundedAccountList from './screens/FundedAccountList';
 import FundedAccountDetail from './screens/FundedAccountDetail';
 import FundedAccountCreate from './screens/FundedAccountCreate';
 import ArchivedList from './screens/ArchivedList';
+import CuentasRegistro from './screens/CuentasRegistro';
 
 export default function App() {
   return (
@@ -33,6 +34,9 @@ export default function App() {
         <Route path="/fondeadas" element={<FundedAccountList />} />
         <Route path="/fondeadas/nueva" element={<FundedAccountCreate />} />
         <Route path="/fondeadas/:id" element={<FundedAccountDetail />} />
+
+        {/* Registro de cuentas (costos y cobros) */}
+        <Route path="/cuentas" element={<CuentasRegistro />} />
       </Route>
     </Routes>
   );
