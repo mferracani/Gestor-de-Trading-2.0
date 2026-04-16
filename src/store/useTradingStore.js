@@ -1,7 +1,32 @@
 import { create } from 'zustand';
 import { collection, query, where, getDocs, getDoc, doc, writeBatch, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { buildTradeFinancials } from '../lib/tradeMath';
+import { buildTradeFinancials, getTradeNetPnl } from '../lib/tradeMath';
+
+const roundMoney = (value) => Number((Number(value) || 0).toFixed(2));
+
+const resolveChallengeStatus = (account, balance) => {
+  if (account.estado === 'archivada') return 'archivada';
+
+  const initialBal = account.balance_inicial_usd || 10000;
+  const maxLossAbs = initialBal - (account.max_loss_usd || 1000);
+  const limitDanger = maxLossAbs + (initialBal * 0.02);
+  const limitWin = initialBal + (account.objetivo_usd || 1000);
+
+  if (balance <= maxLossAbs) return 'quemada';
+  if (balance >= limitWin && account.objetivo_usd > 0) return 'aprobada';
+  if (balance <= limitDanger) return 'danger';
+  return 'activo';
+};
+
+const resolveFundedStatus = (account, balance) => {
+  if (account.estado === 'archivada') return 'archivada';
+
+  const initialBal = account.balance_inicial_usd || 0;
+  const maxLossAbs = account.max_loss_usd ? (initialBal - account.max_loss_usd) : (initialBal * 0.9);
+  if (balance <= maxLossAbs) return 'quemada';
+  return 'activo';
+};
 
 export const useTradingStore = create((set) => ({
   activeChallenge: null,
@@ -228,7 +253,120 @@ export const useTradingStore = create((set) => ({
     }
   },
 
-  stopParaRetiro: async (accountId, fechaCobro) => {
+  updateTrade: async (tradeId, updates) => {
+    try {
+      const tradeRef = doc(db, 'trades', tradeId);
+      const tradeSnap = await getDoc(tradeRef);
+      if (!tradeSnap.exists()) throw new Error('Trade no encontrado');
+
+      const oldTrade = { id: tradeSnap.id, ...tradeSnap.data() };
+      const tipoCuenta = oldTrade.tipo_cuenta === 'fondeada' ? 'fondeada' : 'challenge';
+      const accountCollection = tipoCuenta === 'fondeada' ? 'funded_accounts' : 'accounts';
+      const accountRef = doc(db, accountCollection, oldTrade.account_id);
+      const accountSnap = await getDoc(accountRef);
+      if (!accountSnap.exists()) throw new Error('Cuenta asociada no encontrada');
+
+      const account = { id: accountSnap.id, ...accountSnap.data() };
+      const previousNetPnl = getTradeNetPnl(oldTrade);
+      const nextTrade = { ...oldTrade, ...updates };
+      const { grossPnl, commission, swap, netPnl, estimatedCommission, commissionSource } = buildTradeFinancials(nextTrade, account);
+      const delta = roundMoney(netPnl - previousNetPnl);
+
+      const currentBalance = account.balance_actual_usd ?? account.balance_inicial_usd ?? 0;
+      const currentPnl = account.pnl_acumulado_usd ?? 0;
+      const newBalance = roundMoney(currentBalance + delta);
+      const newPnl = roundMoney(currentPnl + delta);
+
+      const batch = writeBatch(db);
+      batch.update(tradeRef, {
+        activo: nextTrade.activo ?? oldTrade.activo,
+        resultado: nextTrade.resultado ?? oldTrade.resultado,
+        lotes: nextTrade.lotes ?? null,
+        notas: nextTrade.notas ?? '',
+        gross_pnl_usd: grossPnl,
+        comision_usd: commission,
+        comision_estimada_usd: estimatedCommission,
+        comision_fuente: commissionSource,
+        swap_usd: swap,
+        net_pnl_usd: netPnl,
+        pnl_usd: netPnl,
+        updatedAt: new Date().toISOString(),
+      });
+
+      if (tipoCuenta === 'fondeada') {
+        batch.update(accountRef, {
+          balance_actual_usd: newBalance,
+          pnl_acumulado_usd: newPnl,
+          estado: resolveFundedStatus(account, newBalance),
+        });
+      } else {
+        batch.update(accountRef, {
+          balance_actual_usd: newBalance,
+          pnl_acumulado_usd: newPnl,
+          estado: resolveChallengeStatus(account, newBalance),
+        });
+      }
+
+      await batch.commit();
+      await useTradingStore.getState().fetchDashboardData().catch(() => {});
+
+      return { success: true, delta, netPnl };
+    } catch (error) {
+      console.error('Error actualizando trade:', error);
+      throw error;
+    }
+  },
+
+  deleteTrade: async (tradeId) => {
+    try {
+      const tradeRef = doc(db, 'trades', tradeId);
+      const tradeSnap = await getDoc(tradeRef);
+      if (!tradeSnap.exists()) throw new Error('Trade no encontrado');
+
+      const trade = { id: tradeSnap.id, ...tradeSnap.data() };
+      const tipoCuenta = trade.tipo_cuenta === 'fondeada' ? 'fondeada' : 'challenge';
+      const accountCollection = tipoCuenta === 'fondeada' ? 'funded_accounts' : 'accounts';
+      const accountRef = doc(db, accountCollection, trade.account_id);
+      const accountSnap = await getDoc(accountRef);
+      if (!accountSnap.exists()) throw new Error('Cuenta asociada no encontrada');
+
+      const account = { id: accountSnap.id, ...accountSnap.data() };
+      const deletedTradeNet = getTradeNetPnl(trade);
+      const delta = roundMoney(-deletedTradeNet);
+
+      const currentBalance = account.balance_actual_usd ?? account.balance_inicial_usd ?? 0;
+      const currentPnl = account.pnl_acumulado_usd ?? 0;
+      const newBalance = roundMoney(currentBalance + delta);
+      const newPnl = roundMoney(currentPnl + delta);
+
+      const batch = writeBatch(db);
+      batch.delete(tradeRef);
+
+      if (tipoCuenta === 'fondeada') {
+        batch.update(accountRef, {
+          balance_actual_usd: newBalance,
+          pnl_acumulado_usd: newPnl,
+          estado: resolveFundedStatus(account, newBalance),
+        });
+      } else {
+        batch.update(accountRef, {
+          balance_actual_usd: newBalance,
+          pnl_acumulado_usd: newPnl,
+          estado: resolveChallengeStatus(account, newBalance),
+        });
+      }
+
+      await batch.commit();
+      await useTradingStore.getState().fetchDashboardData().catch(() => {});
+
+      return { success: true, delta };
+    } catch (error) {
+      console.error('Error eliminando trade:', error);
+      throw error;
+    }
+  },
+
+  stopParaRetiro: async (accountId, { fechaCobro, montoCobrado } = {}) => {
     const accountRef = doc(db, 'funded_accounts', accountId);
     const snap = await getDoc(accountRef);
     if (!snap.exists()) throw new Error('Cuenta no encontrada');
@@ -237,6 +375,7 @@ export const useTradingStore = create((set) => ({
     await updateDoc(accountRef, {
       en_retiro: true,
       fecha_cobro: fechaCobro || null,
+      monto_cobrado_usd: montoCobrado == null || montoCobrado === '' ? null : Number(montoCobrado),
       fecha_stop_retiro: new Date().toISOString(),
     });
     return { success: true };
@@ -259,6 +398,7 @@ export const useTradingStore = create((set) => ({
       balance_inicial_usd: data.balance_inicial_usd ?? 0,
       fecha_stop: data.fecha_stop_retiro ?? new Date().toISOString(),
       fecha_cobro: data.fecha_cobro ?? null,
+      monto_cobrado_usd: data.monto_cobrado_usd ?? null,
       num_trades: tradesSnap.size,
     };
 
@@ -267,6 +407,7 @@ export const useTradingStore = create((set) => ({
       pnl_acumulado_usd: 0,
       en_retiro: false,
       fecha_cobro: null,
+      monto_cobrado_usd: null,
       fecha_stop_retiro: null,
       ciclo_actual: (data.ciclo_actual ?? 1) + 1,
       historial_ciclos: [...(data.historial_ciclos ?? []), cicloEntry],

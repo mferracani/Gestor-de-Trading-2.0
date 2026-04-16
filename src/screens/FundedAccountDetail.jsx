@@ -18,6 +18,7 @@ export default function FundedAccountDetail() {
   const [loading, setLoading] = useState(true);
   const [showStopPanel, setShowStopPanel] = useState(false);
   const [fechaCobro, setFechaCobro] = useState('');
+  const [montoCobrado, setMontoCobrado] = useState('');
   const [savingStop, setSavingStop] = useState(false);
   const [savingCiclo, setSavingCiclo] = useState(false);
   const [showBalanceAdjust, setShowBalanceAdjust] = useState(false);
@@ -81,9 +82,20 @@ export default function FundedAccountDetail() {
   const handleStopParaRetiro = async () => {
     setSavingStop(true);
     try {
-      await useTradingStore.getState().stopParaRetiro(account.id, fechaCobro || null);
-      setAccount(prev => ({ ...prev, en_retiro: true, fecha_cobro: fechaCobro || null }));
+      const montoNum = montoCobrado === '' ? null : Number(montoCobrado);
+      await useTradingStore.getState().stopParaRetiro(account.id, {
+        fechaCobro: fechaCobro || null,
+        montoCobrado: montoNum,
+      });
+      setAccount(prev => ({
+        ...prev,
+        en_retiro: true,
+        fecha_cobro: fechaCobro || null,
+        monto_cobrado_usd: montoNum,
+      }));
       setShowStopPanel(false);
+      setFechaCobro('');
+      setMontoCobrado('');
       addToast('Retiro iniciado correctamente.', 'success');
     } catch (err) {
       addToast(err.message || 'Error al iniciar retiro.', 'error');
@@ -242,6 +254,9 @@ export default function FundedAccountDetail() {
     cobro.setHours(0, 0, 0, 0); hoy.setHours(0, 0, 0, 0);
     return Math.round((cobro - hoy) / (1000 * 60 * 60 * 24));
   })();
+  // Si no hay fecha de cobro cargada, permitimos cobrar manualmente en cualquier momento.
+  // Si hay fecha, se habilita cuando ya llegó (diasParaCobro <= 0).
+  const puedeCobrar = !account.fecha_cobro || (diasParaCobro !== null && diasParaCobro <= 0);
 
   // ── Consistencia: agrupamos por día ──────────────────────────────────
   // Fórmula real de prop firms (Alpha Capital, FTMO, etc.):
@@ -583,6 +598,23 @@ export default function FundedAccountDetail() {
                 flexDirection: 'column', gap: '12px',
               }}>
                 <div style={{ fontSize: '14px', fontWeight: '600', color: '#30d158' }}>
+                  Monto a cobrar (USD, opcional)
+                </div>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={montoCobrado}
+                  onChange={e => setMontoCobrado(e.target.value)}
+                  placeholder="Ej: 480.50"
+                  style={{
+                    backgroundColor: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '10px', padding: '10px 14px',
+                    fontSize: '15px', color: 'var(--text-primary)',
+                    outline: 'none', width: '100%', boxSizing: 'border-box',
+                  }}
+                />
+                <div style={{ fontSize: '14px', fontWeight: '600', color: '#30d158' }}>
                   Fecha de cobro (opcional)
                 </div>
                 <input
@@ -597,6 +629,9 @@ export default function FundedAccountDetail() {
                     outline: 'none', width: '100%', boxSizing: 'border-box',
                   }}
                 />
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                  La cuenta queda bloqueada hasta la fecha de cobro. Sin fecha, podés desbloquearla cuando quieras.
+                </div>
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <button
                     style={{
@@ -652,16 +687,41 @@ export default function FundedAccountDetail() {
             </div>
           </div>
 
-          {/* Monto a cobrar */}
+          {/* Monto a cobrar — editable */}
           <div style={{
             backgroundColor: 'var(--bg-secondary)',
             borderRadius: '12px', padding: '14px 16px',
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            display: 'flex', flexDirection: 'column', gap: '8px',
           }}>
-            <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Monto a cobrar</span>
-            <span style={{ fontSize: '22px', fontWeight: '800', color: '#30d158' }}>
-              +${pnl.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Monto a cobrar</span>
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                PnL bruto: +${pnl.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+            <input
+              type="number"
+              step="0.01"
+              value={account.monto_cobrado_usd ?? ''}
+              placeholder="Sin monto cargado"
+              onChange={async (e) => {
+                const raw = e.target.value;
+                const nextValue = raw === '' ? null : Number(raw);
+                try {
+                  await updateDoc(doc(db, 'funded_accounts', account.id), { monto_cobrado_usd: nextValue });
+                  setAccount(prev => ({ ...prev, monto_cobrado_usd: nextValue }));
+                } catch {
+                  addToast('Error al actualizar el monto.', 'error');
+                }
+              }}
+              style={{
+                backgroundColor: 'var(--bg-tertiary)',
+                border: '1px solid var(--border)', borderRadius: '10px',
+                padding: '8px 12px', fontSize: '18px', fontWeight: '700',
+                color: account.monto_cobrado_usd != null ? '#30d158' : 'var(--text-secondary)',
+                outline: 'none', width: '100%', boxSizing: 'border-box',
+              }}
+            />
           </div>
 
           {/* Fecha de cobro editable */}
@@ -715,19 +775,27 @@ export default function FundedAccountDetail() {
             )}
           </div>
 
-          {/* Botón Iniciar Nuevo Ciclo */}
+          {/* Botón Iniciar Nuevo Ciclo — bloqueado hasta fecha de cobro */}
           <button
             style={{
               width: '100%', padding: '14px',
-              backgroundColor: 'var(--accent-blue)', border: 'none',
-              borderRadius: '14px', color: '#fff',
+              backgroundColor: puedeCobrar ? 'var(--accent-blue)' : 'var(--bg-tertiary)',
+              border: puedeCobrar ? 'none' : '1px solid var(--border)',
+              borderRadius: '14px',
+              color: puedeCobrar ? '#fff' : 'var(--text-secondary)',
               fontSize: '15px', fontWeight: '700',
-              cursor: 'pointer', opacity: savingCiclo ? 0.7 : 1,
+              cursor: puedeCobrar ? 'pointer' : 'not-allowed',
+              opacity: savingCiclo ? 0.7 : 1,
             }}
             onClick={handleIniciarNuevoCiclo}
-            disabled={savingCiclo}
+            disabled={savingCiclo || !puedeCobrar}
+            title={!puedeCobrar ? 'Bloqueado hasta la fecha de cobro' : ''}
           >
-            {savingCiclo ? 'Iniciando ciclo...' : 'Iniciar Nuevo Ciclo'}
+            {savingCiclo
+              ? 'Iniciando ciclo...'
+              : puedeCobrar
+                ? 'Confirmar cobro e iniciar nuevo ciclo'
+                : `🔒 Bloqueado hasta ${new Date(account.fecha_cobro).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })}`}
           </button>
         </div>
       )}
@@ -1200,14 +1268,21 @@ export default function FundedAccountDetail() {
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '2px' }}>
-                      PnL del ciclo
+                      {ciclo.monto_cobrado_usd != null ? 'Cobrado' : 'PnL del ciclo'}
                     </div>
                     <div style={{
                       fontSize: '18px', fontWeight: '800',
-                      color: ciclo.pnl_usd >= 0 ? '#30d158' : '#ff453a',
+                      color: (ciclo.monto_cobrado_usd ?? ciclo.pnl_usd) >= 0 ? '#30d158' : '#ff453a',
                     }}>
-                      {ciclo.pnl_usd >= 0 ? '+' : ''}${ciclo.pnl_usd.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                      {ciclo.monto_cobrado_usd != null
+                        ? `+$${Number(ciclo.monto_cobrado_usd).toLocaleString('es-AR', { minimumFractionDigits: 2 })}`
+                        : `${ciclo.pnl_usd >= 0 ? '+' : ''}$${ciclo.pnl_usd.toLocaleString('es-AR', { minimumFractionDigits: 2 })}`}
                     </div>
+                    {ciclo.monto_cobrado_usd != null && (
+                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                        PnL bruto: {ciclo.pnl_usd >= 0 ? '+' : ''}${ciclo.pnl_usd.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
