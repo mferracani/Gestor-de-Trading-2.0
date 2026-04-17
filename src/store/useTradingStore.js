@@ -227,14 +227,17 @@ export const useTradingStore = create((set) => ({
       const newBalance = (account.balance_actual_usd || inicial) + finalPnl;
       const newPnl = (account.pnl_acumulado_usd || 0) + finalPnl;
 
-      // Check max loss
-      const maxLossAbs = account.max_loss_usd ? (inicial - account.max_loss_usd) : (inicial * 0.9);
+      // Check max loss — las cuentas de capital propio NO tienen max loss (no se queman)
+      const esPropio = account.tipo_cuenta === 'propio';
       let newEstado = account.estado || 'activo';
       let stopTradingReason = null;
 
-      if (newBalance <= maxLossAbs) {
-        newEstado = 'quemada';
-        stopTradingReason = 'Cuenta Quemada';
+      if (!esPropio) {
+        const maxLossAbs = account.max_loss_usd ? (inicial - account.max_loss_usd) : (inicial * 0.9);
+        if (newBalance <= maxLossAbs) {
+          newEstado = 'quemada';
+          stopTradingReason = 'Cuenta Quemada';
+        }
       }
 
       const batch = writeBatch(db);

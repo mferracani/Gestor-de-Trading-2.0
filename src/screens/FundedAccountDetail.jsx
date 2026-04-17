@@ -235,6 +235,7 @@ export default function FundedAccountDetail() {
   if (!account) return <div style={{ padding: 24, textAlign: 'center', color: 'var(--accent-red)' }}>Cuenta no encontrada.</div>;
 
   // ── Cálculos ──────────────────────────────────────────
+  const esPropio = account.tipo_cuenta === 'propio';
   const inicial = account.balance_inicial_usd || 0;
   const balance = account.balance_actual_usd || inicial;
   const pnl = account.pnl_acumulado_usd || 0;
@@ -379,14 +380,24 @@ export default function FundedAccountDetail() {
       {/* Badge + Nombre */}
       <div style={styles.topSection}>
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
-          <div style={styles.brokerBadge}>{account.broker || 'Cuenta Fondeada'}</div>
-          <div style={{
-            ...styles.brokerBadge,
-            color: account.regla_consistencia ? '#ff9f0a' : '#30d158',
-            backgroundColor: account.regla_consistencia ? 'rgba(255,159,10,0.1)' : 'rgba(48,209,88,0.1)',
-          }}>
-            {account.regla_consistencia ? 'Con consistencia' : 'Sin consistencia'}
-          </div>
+          <div style={styles.brokerBadge}>{account.broker || (esPropio ? 'Capital propio' : 'Cuenta Fondeada')}</div>
+          {esPropio ? (
+            <div style={{
+              ...styles.brokerBadge,
+              color: '#5e9eff',
+              backgroundColor: 'rgba(94,158,255,0.1)',
+            }}>
+              Capital propio
+            </div>
+          ) : (
+            <div style={{
+              ...styles.brokerBadge,
+              color: account.regla_consistencia ? '#ff9f0a' : '#30d158',
+              backgroundColor: account.regla_consistencia ? 'rgba(255,159,10,0.1)' : 'rgba(48,209,88,0.1)',
+            }}>
+              {account.regla_consistencia ? 'Con consistencia' : 'Sin consistencia'}
+            </div>
+          )}
         </div>
         <h1 style={styles.title}>{account.nombre}</h1>
       </div>
@@ -533,7 +544,8 @@ export default function FundedAccountDetail() {
         )}
       </div>
 
-      {/* Progreso de retiro */}
+      {/* Progreso de retiro — oculto en cuentas de capital propio */}
+      {!esPropio && (
       <div style={styles.retiroCard}>
         <div style={styles.retiroHeader}>
           <div>
@@ -664,9 +676,10 @@ export default function FundedAccountDetail() {
           </div>
         )}
       </div>
+      )}
 
       {/* Panel "Retiro en curso" — aparece cuando en_retiro es true */}
-      {enRetiro && (
+      {!esPropio && enRetiro && (
         <div style={{
           backgroundColor: 'rgba(48,209,88,0.07)',
           border: '1px solid rgba(48,209,88,0.3)',
@@ -1060,8 +1073,8 @@ export default function FundedAccountDetail() {
         </div>
       )}
 
-      {/* Panel simple para cuentas sin regla de consistencia */}
-      {!account.regla_consistencia && !enRetiro && trades.length > 0 && (
+      {/* Panel simple para cuentas sin regla de consistencia — oculto en propio */}
+      {!esPropio && !account.regla_consistencia && !enRetiro && trades.length > 0 && (
         <div style={{
           ...styles.guiaCard,
           borderColor: isLogrado ? 'rgba(48,209,88,0.25)' : 'rgba(255,255,255,0.1)',
@@ -1136,18 +1149,20 @@ export default function FundedAccountDetail() {
                   tick={{ fill: '#636366', fontSize: 11 }} 
                   axisLine={false} 
                   tickLine={false} 
-                  domain={[
-                    dataMin => Math.min(0, dataMin, -(account.max_loss_usd || inicial * 0.1)), 
-                    dataMax => Math.max(0, dataMax, targetRetiroUsd)
-                  ]}
+                  domain={esPropio
+                    ? [dataMin => Math.min(0, dataMin), dataMax => Math.max(0, dataMax)]
+                    : [
+                        dataMin => Math.min(0, dataMin, -(account.max_loss_usd || inicial * 0.1)),
+                        dataMax => Math.max(0, dataMax, targetRetiroUsd)
+                      ]}
                 />
                 <Tooltip
                   contentStyle={{ backgroundColor: '#1c1c1e', border: '1px solid #2c2c2e', borderRadius: 10, fontSize: 12 }}
                   labelStyle={{ color: '#ebebf5' }}
                   formatter={(v) => [`$${v}`, 'PnL acum.']}
                 />
-                <ReferenceLine y={targetRetiroUsd} stroke="var(--accent-green)" strokeDasharray="3 3" opacity={0.3} />
-                <ReferenceLine y={-(account.max_loss_usd || inicial * 0.1)} stroke="var(--accent-red)" strokeDasharray="3 3" opacity={0.3} />
+                {!esPropio && <ReferenceLine y={targetRetiroUsd} stroke="var(--accent-green)" strokeDasharray="3 3" opacity={0.3} />}
+                {!esPropio && <ReferenceLine y={-(account.max_loss_usd || inicial * 0.1)} stroke="var(--accent-red)" strokeDasharray="3 3" opacity={0.3} />}
                 <Area type="monotone" dataKey="pnl" stroke={lineColor} strokeWidth={2} fill="url(#eqGradFunded)" dot={false} />
               </AreaChart>
             </ResponsiveContainer>

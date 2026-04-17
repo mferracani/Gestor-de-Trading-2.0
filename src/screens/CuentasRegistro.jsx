@@ -23,6 +23,9 @@ const ESTADO_META = {
 };
 
 const getEstadoMeta = (tipo, estado, enRetiro) => {
+  if (tipo === 'propio') {
+    return { label: 'Propio', color: '#5e9eff', bg: 'rgba(94,158,255,0.12)' };
+  }
   if (tipo === 'fondeada') {
     if (estado === 'quemada') return ESTADO_META.quemada;
     if (enRetiro) return { label: 'En retiro', color: '#5e9eff', bg: 'rgba(94,158,255,0.12)' };
@@ -31,7 +34,8 @@ const getEstadoMeta = (tipo, estado, enRetiro) => {
   return ESTADO_META[estado] || ESTADO_META.activo;
 };
 
-const TIPO_ICON = { challenge: '🎯', fondeada: '💰', historico: '📋' };
+const TIPO_ICON = { challenge: '🎯', fondeada: '💰', propio: '🏦', historico: '📋' };
+const TIPO_LABEL = { challenge: 'Challenge', fondeada: 'Fondeada', propio: 'Capital propio', historico: 'Histórica' };
 
 export default function CuentasRegistro() {
   const addToast = useToast();
@@ -45,14 +49,17 @@ export default function CuentasRegistro() {
   const [search, setSearch] = useState('');
 
   // Form nueva cuenta
-  const [tipoNuevo, setTipoNuevo] = useState('historico'); // 'challenge' | 'fondeada' | 'historico'
+  const [tipoNuevo, setTipoNuevo] = useState('challenge'); // 'challenge' | 'fondeada' | 'propio' | 'historico'
   const [formChallenge, setFormChallenge] = useState({
-    nombre: '', costo_usd: '', slot: 'A',
-    balance: '10000', objetivo: '1000', max_loss: '1000', max_daily_loss: '500',
+    proveedor: '', nombre: '', costo_usd: '', fase: 'Fase 1',
+    balance: '', objetivo: '', max_loss: '', max_daily_loss: '',
   });
   const [formFondeada, setFormFondeada] = useState({
-    nombre: '', broker: '', costo_usd: '', balance: '',
+    proveedor: '', nombre: '', costo_usd: '', balance: '',
     objetivo_retiro_pct: 2, regla_consistencia: true, consistencia_pct: 40,
+  });
+  const [formPropio, setFormPropio] = useState({
+    proveedor: '', nombre: '', costo_usd: '', balance: '',
   });
   const [formHistorico, setFormHistorico] = useState({ nombre: '', costo_usd: '', notas: '' });
   const [savingNew, setSavingNew] = useState(false);
@@ -75,9 +82,15 @@ export default function CuentasRegistro() {
       const challenges = challengeSnap.docs.map(d => ({
         id: d.id, tipo: 'challenge', col: 'accounts', ...d.data(),
       }));
-      const funded = fundedSnap.docs.map(d => ({
-        id: d.id, tipo: 'fondeada', col: 'funded_accounts', ...d.data(),
-      }));
+      const funded = fundedSnap.docs.map(d => {
+        const data = d.data();
+        return {
+          id: d.id,
+          tipo: data.tipo_cuenta === 'propio' ? 'propio' : 'fondeada',
+          col: 'funded_accounts',
+          ...data,
+        };
+      });
 
       const order = { activo: 0, danger: 1, aprobada: 2, quemada: 3, archivada: 4 };
       const all = [...challenges, ...funded].sort((a, b) => {
@@ -120,30 +133,37 @@ export default function CuentasRegistro() {
         setFormHistorico({ nombre: '', costo_usd: '', notas: '' });
 
       } else if (tipoNuevo === 'challenge') {
-        const { nombre, costo_usd, slot, balance, objetivo, max_loss, max_daily_loss } = formChallenge;
+        const { proveedor, nombre, costo_usd, fase, balance, objetivo, max_loss, max_daily_loss } = formChallenge;
         if (!nombre.trim()) { addToast('Ingresá un nombre.', 'warning'); setSavingNew(false); return; }
+        if (!balance) { addToast('Ingresá el monto de la cuenta.', 'warning'); setSavingNew(false); return; }
+        const slot = nextSlot;
+        // Si no hay ninguna cuenta activa actualmente, la nueva queda como activa
+        const hayActiva = operativas.some(a => a.tipo === 'challenge' && a.es_cuenta_activa);
         await addDoc(collection(db, 'accounts'), {
           user_id: USER_ID, slot, label: `Cuenta ${slot}`, nombre: nombre.trim(),
-          fase_actual: 'Fase 1', estado: 'activo',
-          balance_inicial_usd: Number(balance) || 10000,
-          balance_actual_usd: Number(balance) || 10000,
-          objetivo_usd: Number(objetivo) || 1000,
-          max_loss_usd: Number(max_loss) || 1000,
-          max_daily_loss_usd: Number(max_daily_loss) || 500,
+          proveedor: proveedor.trim() || null,
+          fase_actual: fase || 'Fase 1', estado: 'activo',
+          balance_inicial_usd: Number(balance),
+          balance_actual_usd: Number(balance),
+          objetivo_usd: Number(objetivo) || 0,
+          max_loss_usd: Number(max_loss) || 0,
+          max_daily_loss_usd: Number(max_daily_loss) || 0,
           pnl_acumulado_usd: 0,
           orden_rotacion: slot === 'A' ? 1 : slot === 'B' ? 2 : 3,
-          es_cuenta_activa: slot === 'A',
-          costo_usd: Number(costo_usd) || 0, cobros: [],
+          es_cuenta_activa: !hayActiva,
+          costo_usd: fase === 'Fase 2' ? 0 : (Number(costo_usd) || 0), cobros: [],
           created_at: new Date().toISOString(),
         });
-        setFormChallenge({ nombre: '', costo_usd: '', slot: 'A', balance: '10000', objetivo: '1000', max_loss: '1000', max_daily_loss: '500' });
+        setFormChallenge({ proveedor: '', nombre: '', costo_usd: '', fase: 'Fase 1', balance: '', objetivo: '', max_loss: '', max_daily_loss: '' });
 
-      } else {
-        const { nombre, broker, costo_usd, balance, objetivo_retiro_pct, regla_consistencia, consistencia_pct } = formFondeada;
+      } else if (tipoNuevo === 'fondeada') {
+        const { proveedor, nombre, costo_usd, balance, objetivo_retiro_pct, regla_consistencia, consistencia_pct } = formFondeada;
         if (!nombre.trim() || !balance) { addToast('Completá nombre y balance.', 'warning'); setSavingNew(false); return; }
         await addDoc(collection(db, 'funded_accounts'), {
           user_id: USER_ID, nombre: nombre.trim(),
-          broker: broker.trim() || 'Cuenta Fondeada',
+          tipo_cuenta: 'fondeada',
+          broker: proveedor.trim() || 'Cuenta Fondeada',
+          proveedor: proveedor.trim() || null,
           balance_inicial_usd: Number(balance), balance_actual_usd: Number(balance),
           pnl_acumulado_usd: 0, objetivo_retiro_pct: Number(objetivo_retiro_pct) || 2,
           regla_consistencia, consistencia_pct: regla_consistencia ? (Number(consistencia_pct) || 40) : null,
@@ -153,7 +173,28 @@ export default function CuentasRegistro() {
           costo_usd: Number(costo_usd) || 0, cobros: [],
           createdAt: new Date().toISOString(),
         });
-        setFormFondeada({ nombre: '', broker: '', costo_usd: '', balance: '', objetivo_retiro_pct: 2, regla_consistencia: true, consistencia_pct: 40 });
+        setFormFondeada({ proveedor: '', nombre: '', costo_usd: '', balance: '', objetivo_retiro_pct: 2, regla_consistencia: true, consistencia_pct: 40 });
+
+      } else if (tipoNuevo === 'propio') {
+        const { proveedor, nombre, costo_usd, balance } = formPropio;
+        if (!nombre.trim() || !balance) { addToast('Completá nombre y balance.', 'warning'); setSavingNew(false); return; }
+        await addDoc(collection(db, 'funded_accounts'), {
+          user_id: USER_ID, nombre: nombre.trim(),
+          tipo_cuenta: 'propio',
+          broker: proveedor.trim() || 'Capital propio',
+          proveedor: proveedor.trim() || null,
+          balance_inicial_usd: Number(balance), balance_actual_usd: Number(balance),
+          pnl_acumulado_usd: 0,
+          // Sin target, sin max loss, sin consistencia, sin ciclos
+          objetivo_retiro_pct: 0,
+          regla_consistencia: false, consistencia_pct: null,
+          commission_profile: 'alpha_raw', commission_per_side_usd: 2.5, notas: '',
+          estado: 'activo', en_retiro: false, fecha_cobro: null,
+          ciclo_actual: 1, historial_ciclos: [],
+          costo_usd: Number(costo_usd) || 0, cobros: [],
+          createdAt: new Date().toISOString(),
+        });
+        setFormPropio({ proveedor: '', nombre: '', costo_usd: '', balance: '' });
       }
 
       setShowNew(false);
@@ -207,16 +248,25 @@ export default function CuentasRegistro() {
     await handleUpdateField(editing, { cobros: (editing.cobros || []).filter(c => c.id !== cobroId) });
   };
 
+  // ── Próximo slot disponible para challenge (A → B → C) ──────────────────────
+  const takenSlots = new Set(
+    operativas
+      .filter(a => a.tipo === 'challenge' && ['activo', 'danger'].includes(a.estado))
+      .map(a => a.slot)
+  );
+  const nextSlot = ['A', 'B', 'C'].find(s => !takenSlots.has(s)) || 'A';
+
   // ── Lista unificada y ordenada ───────────────────────────────────────────────
   const ORDER = { activo: 0, danger: 1, aprobada: 2, quemada: 3, archivada: 4, historico: 5 };
   const allSorted = [...operativas, ...historicas].sort((a, b) => {
-    const pa = a.tipo === 'historico' ? ORDER.historico
-      : a.tipo === 'fondeada' ? (a.estado === 'quemada' ? ORDER.quemada : 0)
-      : (ORDER[a.estado] ?? 0);
-    const pb = b.tipo === 'historico' ? ORDER.historico
-      : b.tipo === 'fondeada' ? (b.estado === 'quemada' ? ORDER.quemada : 0)
-      : (ORDER[b.estado] ?? 0);
-    if (pa !== pb) return pa - pb;
+    const rank = (x) => {
+      if (x.tipo === 'historico') return ORDER.historico;
+      if (x.tipo === 'propio') return 0; // propio siempre activo
+      if (x.tipo === 'fondeada') return x.estado === 'quemada' ? ORDER.quemada : 0;
+      return ORDER[x.estado] ?? 0;
+    };
+    const diff = rank(a) - rank(b);
+    if (diff !== 0) return diff;
     return (a.nombre || '').localeCompare(b.nombre || '');
   });
 
@@ -225,6 +275,7 @@ export default function CuentasRegistro() {
   const filteredAll = q
     ? allSorted.filter(r =>
         (r.nombre || '').toLowerCase().includes(q) ||
+        (r.proveedor || '').toLowerCase().includes(q) ||
         (r.broker || '').toLowerCase().includes(q) ||
         (r.slot || '').toLowerCase().includes(q) ||
         (r.notas || '').toLowerCase().includes(q)
@@ -259,7 +310,7 @@ export default function CuentasRegistro() {
         <Search size={15} color="var(--text-secondary)" style={{ flexShrink: 0 }} />
         <input
           style={styles.searchInput}
-          placeholder="Buscar por nombre, broker, slot..."
+          placeholder="Buscar por nombre, proveedor, slot..."
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
@@ -282,9 +333,10 @@ export default function CuentasRegistro() {
         <div style={styles.formCard}>
           <div style={styles.toggleRow}>
             {[
-              { key: 'historico',  label: '📋 Histórica' },
               { key: 'challenge',  label: '🎯 Challenge' },
               { key: 'fondeada',   label: '💰 Fondeada'  },
+              { key: 'propio',     label: '🏦 Propio'    },
+              { key: 'historico',  label: '📋 Histórica' },
             ].map(t => (
               <button key={t.key} style={{
                 ...styles.toggleBtn,
@@ -301,16 +353,17 @@ export default function CuentasRegistro() {
               <div style={styles.formRow}>
                 <input style={styles.input} placeholder="Nombre (ej: FTMO 10k quemada)"
                   value={formHistorico.nombre} onChange={e => setFormHistorico(f => ({ ...f, nombre: e.target.value }))} />
-                <input type="number" step="0.01" style={{ ...styles.input, maxWidth: 140 }}
-                  placeholder="Costo USD" value={formHistorico.costo_usd}
-                  onChange={e => setFormHistorico(f => ({ ...f, costo_usd: e.target.value }))} />
+                <MoneyInput value={formHistorico.costo_usd}
+                  onChange={v => setFormHistorico(f => ({ ...f, costo_usd: v }))}
+                  placeholder="Costo" style={{ maxWidth: 180 }} />
               </div>
               <input style={styles.input} placeholder="Notas (opcional)"
                 value={formHistorico.notas} onChange={e => setFormHistorico(f => ({ ...f, notas: e.target.value }))} />
             </div>
           )}
-          {tipoNuevo === 'challenge' && <ChallengeForm form={formChallenge} onChange={setFormChallenge} />}
+          {tipoNuevo === 'challenge' && <ChallengeForm form={formChallenge} onChange={setFormChallenge} slotPreview={nextSlot} />}
           {tipoNuevo === 'fondeada'  && <FondedaForm form={formFondeada} onChange={setFormFondeada} />}
+          {tipoNuevo === 'propio'    && <PropioForm form={formPropio} onChange={setFormPropio} />}
 
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
             <button style={styles.btnGhost} onClick={() => setShowNew(false)}>Cancelar</button>
@@ -456,7 +509,17 @@ function CuentaRow({ r, onEdit, onDelete, onUpdate, navigate }) {
           <span style={{ fontWeight: 600, fontSize: 15 }}>{r.nombre}</span>
         </div>
         <div style={styles.rowNameSub}>
-          {r.tipo === 'challenge' ? 'Challenge' : r.tipo === 'fondeada' ? 'Fondeada' : 'Histórica'}
+          {(() => {
+            const parts = [];
+            if (r.proveedor) parts.push(r.proveedor);
+            const bal = r.balance_inicial_usd || r.balance_actual_usd || 0;
+            if (bal >= 1000) parts.push(`${bal / 1000}K`);
+            if (r.tipo === 'challenge' && r.fase_actual) parts.push(r.fase_actual);
+            else if (r.tipo === 'fondeada') parts.push('Fondeada');
+            else if (r.tipo === 'propio') parts.push('Capital propio');
+            else if (r.tipo === 'historico') parts.push('Histórica');
+            return parts.join(' · ') || TIPO_LABEL[r.tipo] || 'Cuenta';
+          })()}
         </div>
       </div>
 
@@ -467,16 +530,9 @@ function CuentaRow({ r, onEdit, onDelete, onUpdate, navigate }) {
         </span>
       </div>
 
-      {/* Costo — editable inline */}
-      <div style={styles.rowCosto}>
-        <input
-          type="number" step="0.01"
-          defaultValue={r.costo_usd ?? ''}
-          placeholder="—"
-          key={`${r.id}-costo`}
-          onBlur={e => onUpdate(r, { costo_usd: Number(e.target.value) || 0 })}
-          style={styles.costoInput}
-        />
+      {/* Costo — solo lectura, en rojo */}
+      <div style={{ ...styles.rowNum, color: (Number(r.costo_usd) || 0) > 0 ? '#ff453a' : 'var(--text-secondary)' }}>
+        {(Number(r.costo_usd) || 0) > 0 ? fmt(r.costo_usd) : <span style={{ color: 'var(--text-secondary)' }}>—</span>}
       </div>
 
       {/* Cobrado — solo fondeadas e históricas */}
@@ -505,25 +561,36 @@ function CuentaRow({ r, onEdit, onDelete, onUpdate, navigate }) {
 }
 
 // ── Subforms ──────────────────────────────────────────────────────────────────
-function ChallengeForm({ form, onChange }) {
+function ChallengeForm({ form, onChange, slotPreview }) {
   const set = (k, v) => onChange(f => ({ ...f, [k]: v }));
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={styles.formRow}>
+        <input style={styles.input} placeholder="Proveedor (ej: FTMO, Alpha)" value={form.proveedor} onChange={e => set('proveedor', e.target.value)} />
         <input style={styles.input} placeholder="Nombre" value={form.nombre} onChange={e => set('nombre', e.target.value)} />
-        <input type="number" step="0.01" style={{ ...styles.input, maxWidth: 140 }} placeholder="Costo USD" value={form.costo_usd} onChange={e => set('costo_usd', e.target.value)} />
       </div>
       <div style={styles.formRow}>
-        <select style={styles.input} value={form.slot} onChange={e => set('slot', e.target.value)}>
-          {['A','B','C'].map(s => <option key={s} value={s}>Slot {s}</option>)}
+        <AmountSelect value={form.balance} onChange={v => set('balance', v)} label="Monto de la cuenta" />
+        <select style={{ ...styles.input, maxWidth: 140 }} value={form.fase} onChange={e => set('fase', e.target.value)}>
+          <option value="Fase 1">Fase 1</option>
+          <option value="Fase 2">Fase 2</option>
         </select>
-        <input type="number" style={styles.input} placeholder="Balance inicial" value={form.balance} onChange={e => set('balance', e.target.value)} />
       </div>
       <div style={styles.formRow}>
-        <input type="number" style={styles.input} placeholder="Objetivo USD" value={form.objetivo} onChange={e => set('objetivo', e.target.value)} />
-        <input type="number" style={styles.input} placeholder="Max loss total" value={form.max_loss} onChange={e => set('max_loss', e.target.value)} />
-        <input type="number" style={styles.input} placeholder="Max loss diario" value={form.max_daily_loss} onChange={e => set('max_daily_loss', e.target.value)} />
+        {form.fase !== 'Fase 2' && (
+          <MoneyInput value={form.costo_usd} onChange={v => set('costo_usd', v)} placeholder="Costo" />
+        )}
+        <MoneyInput value={form.objetivo} onChange={v => set('objetivo', v)} placeholder="Target profit" />
       </div>
+      <div style={styles.formRow}>
+        <MoneyInput value={form.max_loss} onChange={v => set('max_loss', v)} placeholder="Max drawdown" />
+        <MoneyInput value={form.max_daily_loss} onChange={v => set('max_daily_loss', v)} placeholder="Max daily drawdown" />
+      </div>
+      {slotPreview && (
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)', paddingLeft: 2 }}>
+          Se asignará automáticamente al <strong style={{ color: 'var(--accent-blue)' }}>Slot {slotPreview}</strong> (primer slot libre).
+        </div>
+      )}
     </div>
   );
 }
@@ -533,14 +600,112 @@ function FondedaForm({ form, onChange }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={styles.formRow}>
+        <input style={styles.input} placeholder="Proveedor (ej: Alpha Capital)" value={form.proveedor} onChange={e => set('proveedor', e.target.value)} />
         <input style={styles.input} placeholder="Nombre" value={form.nombre} onChange={e => set('nombre', e.target.value)} />
-        <input style={{ ...styles.input, maxWidth: 180 }} placeholder="Broker (opcional)" value={form.broker} onChange={e => set('broker', e.target.value)} />
       </div>
       <div style={styles.formRow}>
-        <input type="number" style={styles.input} placeholder="Balance inicial USD" value={form.balance} onChange={e => set('balance', e.target.value)} />
-        <input type="number" step="0.01" style={{ ...styles.input, maxWidth: 140 }} placeholder="Costo USD" value={form.costo_usd} onChange={e => set('costo_usd', e.target.value)} />
-        <input type="number" style={{ ...styles.input, maxWidth: 100 }} placeholder="Obj. retiro %" value={form.objetivo_retiro_pct} onChange={e => set('objetivo_retiro_pct', e.target.value)} />
+        <AmountSelect value={form.balance} onChange={v => set('balance', v)} label="Monto de la cuenta" />
       </div>
+      <div style={styles.formRow}>
+        <MoneyInput value={form.costo_usd} onChange={v => set('costo_usd', v)} placeholder="Costo" />
+        <input type="number" style={{ ...styles.input, maxWidth: 140 }} placeholder="Obj. retiro %" value={form.objetivo_retiro_pct} onChange={e => set('objetivo_retiro_pct', e.target.value)} />
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
+        <input type="checkbox" checked={form.regla_consistencia} onChange={e => set('regla_consistencia', e.target.checked)} />
+        Regla de consistencia
+        {form.regla_consistencia && (
+          <input type="number" style={{ ...styles.input, maxWidth: 120, marginLeft: 8 }} placeholder="% consistencia" value={form.consistencia_pct} onChange={e => set('consistencia_pct', e.target.value)} />
+        )}
+      </label>
+    </div>
+  );
+}
+
+function PropioForm({ form, onChange }) {
+  const set = (k, v) => onChange(f => ({ ...f, [k]: v }));
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '4px 2px' }}>
+        Capital propio: sin target, sin max loss. Balance libre.
+      </div>
+      <div style={styles.formRow}>
+        <input style={styles.input} placeholder="Proveedor (ej: Broker, Exchange)" value={form.proveedor} onChange={e => set('proveedor', e.target.value)} />
+        <input style={styles.input} placeholder="Nombre" value={form.nombre} onChange={e => set('nombre', e.target.value)} />
+      </div>
+      <div style={styles.formRow}>
+        <AmountSelect value={form.balance} onChange={v => set('balance', v)} label="Monto de la cuenta" />
+        <MoneyInput value={form.costo_usd} onChange={v => set('costo_usd', v)} placeholder="Costo" style={{ maxWidth: 180 }} />
+      </div>
+    </div>
+  );
+}
+
+// ── MoneyInput ────────────────────────────────────────────────────────────────
+// Input numérico con prefijo $ y separador de miles es-AR (1.000, 10.000)
+function MoneyInput({ value, onChange, placeholder, style }) {
+  const formatted = value !== '' && value !== null && value !== undefined && !isNaN(Number(value))
+    ? Number(value).toLocaleString('es-AR')
+    : '';
+  const handleChange = (e) => {
+    // Solo dígitos: saco puntos, comas, letras
+    const raw = e.target.value.replace(/[^\d]/g, '');
+    onChange(raw === '' ? '' : raw);
+  };
+  return (
+    <div style={{ position: 'relative', flex: 1, minWidth: 100, ...style }}>
+      <span style={{
+        position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)',
+        color: 'var(--text-secondary)', fontSize: 14, pointerEvents: 'none',
+      }}>$</span>
+      <input
+        inputMode="numeric"
+        value={formatted}
+        onChange={handleChange}
+        placeholder={placeholder}
+        style={{
+          width: '100%', boxSizing: 'border-box',
+          backgroundColor: 'var(--bg-tertiary)',
+          border: '1px solid var(--border)',
+          borderRadius: 10, padding: '9px 12px 9px 22px',
+          fontSize: 14, color: 'var(--text-primary)', outline: 'none',
+        }}
+      />
+    </div>
+  );
+}
+
+// ── AmountSelect ──────────────────────────────────────────────────────────────
+// Dropdown con presets de tamaño de cuenta + opción "Otro" para input libre
+const AMOUNT_PRESETS = [
+  { label: '10K',  value: 10000 },
+  { label: '25K',  value: 25000 },
+  { label: '50K',  value: 50000 },
+  { label: '100K', value: 100000 },
+  { label: '200K', value: 200000 },
+  { label: '500K', value: 500000 },
+];
+function AmountSelect({ value, onChange, label = 'Monto de la cuenta' }) {
+  const numericValue = value === '' ? '' : Number(value);
+  const isPreset = AMOUNT_PRESETS.some(p => p.value === numericValue);
+  const mode = value === '' ? '' : (isPreset ? String(numericValue) : 'otro');
+
+  return (
+    <div style={{ display: 'flex', gap: 8, flex: 1, flexWrap: 'wrap' }}>
+      <select
+        value={mode}
+        onChange={e => {
+          if (e.target.value === 'otro') onChange('');
+          else onChange(e.target.value);
+        }}
+        style={{ ...styles.input, flex: 1, minWidth: 140 }}
+      >
+        <option value="" disabled>{label}</option>
+        {AMOUNT_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+        <option value="otro">Otro…</option>
+      </select>
+      {mode === 'otro' && (
+        <MoneyInput value={value} onChange={onChange} placeholder="Monto USD" style={{ flex: 1 }} />
+      )}
     </div>
   );
 }
