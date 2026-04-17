@@ -231,10 +231,13 @@ export default function CuentasRegistro() {
       )
     : allSorted;
 
-  // ── Totales (operativas + históricas) ───────────────────────────────────────
+  // ── Totales ──────────────────────────────────────────────────────────────────
   const allRows = [...operativas, ...historicas];
   const totalInvertido = allRows.reduce((s, r) => s + (Number(r.costo_usd) || 0), 0);
-  const totalCobrado = allRows.reduce((s, r) => s + (r.cobros || []).reduce((a, c) => a + (Number(c.monto_usd) || 0), 0), 0);
+  // Cobrado solo cuenta en fondeadas e históricas (los challenges no se cobran, se pasan)
+  const totalCobrado = allRows
+    .filter(r => r.tipo !== 'challenge')
+    .reduce((s, r) => s + (r.cobros || []).reduce((a, c) => a + (Number(c.monto_usd) || 0), 0), 0);
   const saldoNeto = totalCobrado - totalInvertido;
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -437,8 +440,9 @@ export default function CuentasRegistro() {
 
 // ── Fila de cuenta ────────────────────────────────────────────────────────────
 function CuentaRow({ r, onEdit, onDelete, onUpdate, navigate }) {
-  const cobrado = (r.cobros || []).reduce((s, c) => s + (Number(c.monto_usd) || 0), 0);
-  const neto = cobrado - (Number(r.costo_usd) || 0);
+  const esChallenge = r.tipo === 'challenge';
+  const cobrado = esChallenge ? null : (r.cobros || []).reduce((s, c) => s + (Number(c.monto_usd) || 0), 0);
+  const neto = esChallenge ? null : cobrado - (Number(r.costo_usd) || 0);
   const meta = r.tipo === 'historico'
     ? { label: 'Historial', color: '#8e8e93', bg: 'rgba(142,142,147,0.12)' }
     : getEstadoMeta(r.tipo, r.estado, r.en_retiro);
@@ -478,10 +482,10 @@ function CuentaRow({ r, onEdit, onDelete, onUpdate, navigate }) {
       </div>
 
       <div style={{ ...styles.rowNum, color: cobrado > 0 ? '#30d158' : 'var(--text-secondary)' }}>
-        {fmt(cobrado)}
+        {cobrado === null ? <span style={{ color: 'var(--text-secondary)' }}>—</span> : fmt(cobrado)}
       </div>
-      <div style={{ ...styles.rowNum, fontWeight: 700, color: neto >= 0 ? '#30d158' : '#ff453a' }}>
-        {neto >= 0 ? '+' : ''}{fmt(neto)}
+      <div style={{ ...styles.rowNum, fontWeight: 700, color: neto === null ? 'var(--text-secondary)' : neto >= 0 ? '#30d158' : '#ff453a' }}>
+        {neto === null ? <span style={{ color: 'var(--text-secondary)' }}>—</span> : `${neto >= 0 ? '+' : ''}${fmt(neto)}`}
       </div>
 
       <div style={styles.rowActions}>
