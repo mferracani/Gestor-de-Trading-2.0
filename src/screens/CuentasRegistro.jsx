@@ -329,10 +329,9 @@ export default function CuentasRegistro() {
           {/* Header tabla desktop */}
           <div className="desktop-only" style={styles.listHeader}>
             <span style={{ flex: 2 }}>Nombre</span>
-            <span style={{ flex: 1, textAlign: 'right' }}>Costo</span>
             <span style={{ flex: 1, textAlign: 'center' }}>Estado</span>
+            <span style={{ flex: 1, textAlign: 'right' }}>Costo</span>
             <span style={{ flex: 1, textAlign: 'right' }}>Cobrado</span>
-            <span style={{ flex: 1, textAlign: 'right' }}>Neto</span>
             <span style={{ width: 80 }}></span>
           </div>
 
@@ -442,7 +441,6 @@ export default function CuentasRegistro() {
 function CuentaRow({ r, onEdit, onDelete, onUpdate, navigate }) {
   const esChallenge = r.tipo === 'challenge';
   const cobrado = esChallenge ? null : (r.cobros || []).reduce((s, c) => s + (Number(c.monto_usd) || 0), 0);
-  const neto = esChallenge ? null : cobrado - (Number(r.costo_usd) || 0);
   const meta = r.tipo === 'historico'
     ? { label: 'Historial', color: '#8e8e93', bg: 'rgba(142,142,147,0.12)' }
     : getEstadoMeta(r.tipo, r.estado, r.en_retiro);
@@ -451,41 +449,42 @@ function CuentaRow({ r, onEdit, onDelete, onUpdate, navigate }) {
 
   return (
     <div style={{ ...styles.row, opacity: isArchivada ? 0.55 : 1 }}>
+      {/* Nombre */}
       <div style={styles.rowName}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontSize: 13 }}>{TIPO_ICON[r.tipo] || '📋'}</span>
           <span style={{ fontWeight: 600, fontSize: 15 }}>{r.nombre}</span>
         </div>
         <div style={styles.rowNameSub}>
-          {(r.cobros || []).length} cobro{(r.cobros || []).length !== 1 ? 's' : ''}
-          {r.tipo === 'challenge' ? ' · Challenge' : r.tipo === 'fondeada' ? ' · Fondeada' : ''}
+          {r.tipo === 'challenge' ? 'Challenge' : r.tipo === 'fondeada' ? 'Fondeada' : 'Histórica'}
         </div>
       </div>
 
-      <div style={styles.rowCosto}>
-        <input
-          type="number" step="0.01"
-          value={r.costo_usd ?? ''}
-          placeholder="—"
-          onChange={e => {}}  // controlled via onBlur
-          onBlur={e => onUpdate(r, { costo_usd: Number(e.target.value) || 0 })}
-          defaultValue={r.costo_usd ?? ''}
-          key={`${r.id}-costo`}
-          style={styles.costoInput}
-        />
-      </div>
-
+      {/* Estado */}
       <div style={styles.rowEstado}>
         <span style={{ ...styles.estadoBadge, backgroundColor: meta.bg, color: meta.color }}>
           {meta.label}
         </span>
       </div>
 
-      <div style={{ ...styles.rowNum, color: cobrado > 0 ? '#30d158' : 'var(--text-secondary)' }}>
-        {cobrado === null ? <span style={{ color: 'var(--text-secondary)' }}>—</span> : fmt(cobrado)}
+      {/* Costo — editable inline */}
+      <div style={styles.rowCosto}>
+        <input
+          type="number" step="0.01"
+          defaultValue={r.costo_usd ?? ''}
+          placeholder="—"
+          key={`${r.id}-costo`}
+          onBlur={e => onUpdate(r, { costo_usd: Number(e.target.value) || 0 })}
+          style={styles.costoInput}
+        />
       </div>
-      <div style={{ ...styles.rowNum, fontWeight: 700, color: neto === null ? 'var(--text-secondary)' : neto >= 0 ? '#30d158' : '#ff453a' }}>
-        {neto === null ? <span style={{ color: 'var(--text-secondary)' }}>—</span> : `${neto >= 0 ? '+' : ''}${fmt(neto)}`}
+
+      {/* Cobrado — solo fondeadas e históricas */}
+      <div style={{ ...styles.rowNum, color: cobrado > 0 ? '#30d158' : 'var(--text-secondary)' }}>
+        {cobrado === null
+          ? <span style={{ color: 'var(--text-secondary)' }}>—</span>
+          : cobrado > 0 ? fmt(cobrado) : <span style={{ color: 'var(--text-secondary)' }}>—</span>
+        }
       </div>
 
       <div style={styles.rowActions}>
