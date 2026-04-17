@@ -103,13 +103,32 @@ export const useTradingStore = create((set) => ({
       const maxLossAbs = initialBal - (account.max_loss_usd || 1000);
       const limitDanger = maxLossAbs + (initialBal * 0.02); // 2% por encima del max loss
       const limitWin = initialBal + (account.objetivo_usd || 1000);
-      
+
+      // Calcular pérdida diaria: trades de hoy + este trade
+      const hoy = new Date().toISOString().slice(0, 10);
+      const todayTradesSnap = await getDocs(
+        query(collection(db, 'trades'),
+          where('account_id', '==', accountId),
+          where('fecha', '>=', hoy + 'T00:00:00.000Z'),
+          where('fecha', '<=', hoy + 'T23:59:59.999Z')
+        )
+      );
+      const existingDailyPnl = todayTradesSnap.docs.reduce((s, d) => {
+        const t = d.data();
+        return s + (t.net_pnl_usd ?? t.pnl_usd ?? 0);
+      }, 0);
+      const totalDailyPnl = existingDailyPnl + finalPnl;
+      const dailyLoss = -totalDailyPnl; // positivo = pérdida del día
+
       let newEstado = account.estado;
       let stopTradingReason = null;
 
       if (newBalance <= maxLossAbs) {
         newEstado = 'quemada';
         stopTradingReason = 'Cuenta Quemada';
+      } else if (account.max_daily_loss_usd > 0 && dailyLoss >= account.max_daily_loss_usd) {
+        newEstado = 'quemada';
+        stopTradingReason = 'Límite diario superado';
       } else if (newBalance >= limitWin && account.objetivo_usd > 0) {
         newEstado = 'aprobada';
         stopTradingReason = 'Objetivo Alcanzado';
