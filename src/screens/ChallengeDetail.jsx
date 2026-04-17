@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { ArrowLeft, Edit3, Archive, TrendingUp, TrendingDown, Minus, Trash2, X, Check } from 'lucide-react';
+import { ArrowLeft, Edit3, Archive, TrendingUp, TrendingDown, Minus, Trash2, X, Check, Flame } from 'lucide-react';
 import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useTradingStore } from '../store/useTradingStore';
@@ -75,6 +75,36 @@ export default function ChallengeDetail() {
     } catch (err) {
       console.error('Error archivando:', err);
       addToast('Error al archivar: ' + err.message, 'error');
+    }
+  };
+
+  const handleMarkQuemada = async () => {
+    if (!window.confirm('¿Marcar esta cuenta como quemada? Se retirará de los slots activos y se ejecutará la rotación si correspondía.')) return;
+    try {
+      const { accounts } = useTradingStore.getState();
+      const isActive = account?.es_cuenta_activa === true;
+
+      const patch = { estado: 'quemada', es_cuenta_activa: false };
+
+      // Si era la cuenta activa, activar la siguiente en rotación
+      if (isActive) {
+        const operativas = accounts.filter(a => (a.estado === 'activo' || a.estado === 'danger') && a.id !== id);
+        operativas.sort((a, b) => a.orden_rotacion - b.orden_rotacion);
+        const currentOrden = account?.orden_rotacion ?? 0;
+        const siguiente = operativas.find(a => a.orden_rotacion > currentOrden) || operativas[0];
+        if (siguiente) {
+          await updateDoc(doc(db, 'accounts', siguiente.id), { es_cuenta_activa: true });
+        }
+      }
+
+      await updateDoc(doc(db, 'accounts', id), patch);
+      setAccount(prev => ({ ...prev, ...patch }));
+      await fetchAccounts();
+      addToast('Cuenta marcada como quemada.', 'success');
+      navigate('/challenges');
+    } catch (err) {
+      console.error('Error marcando como quemada:', err);
+      addToast('Error: ' + err.message, 'error');
     }
   };
 
@@ -221,6 +251,11 @@ export default function ChallengeDetail() {
           <ArrowLeft size={24} color="var(--text-primary)" />
         </button>
         <div style={styles.actions}>
+          {account?.estado !== 'quemada' && (
+            <button style={styles.iconButton} onClick={handleMarkQuemada} title="Marcar como quemada">
+              <Flame size={20} color="#ff9f0a" />
+            </button>
+          )}
           <button style={styles.iconButton} onClick={handleArchive} title="Archivar">
             <Archive size={20} color="var(--text-secondary)" />
           </button>

@@ -75,6 +75,7 @@ export default function FundedAccountList() {
 }
 
 function FundedAccountCard({ account, onPress }) {
+  const esPropio = account.tipo_cuenta === 'propio';
   const balance = account.balance_actual_usd || account.balance_inicial_usd || 0;
   const inicial = account.balance_inicial_usd || 0;
   const pnl = account.pnl_acumulado_usd || 0;
@@ -82,7 +83,7 @@ function FundedAccountCard({ account, onPress }) {
   const targetRetiroUsd = (inicial * targetRetiroPct) / 100;
   const faltaUsd = Math.max(0, targetRetiroUsd - pnl);
   const progresoPct = Math.min(100, (pnl / targetRetiroUsd) * 100);
-  const isLogrado = faltaUsd <= 0 && pnl > 0;
+  const isLogrado = !esPropio && faltaUsd <= 0 && pnl > 0;
 
   const pnlColor = pnl > 0 ? 'var(--accent-green)' : pnl < 0 ? 'var(--accent-red)' : 'var(--text-secondary)';
   const accentColor = isLogrado ? '#30d158' : 'var(--accent-blue)';
@@ -94,7 +95,7 @@ function FundedAccountCard({ account, onPress }) {
         <div style={styles.cardIcon}>
           <Wallet size={18} color={accentColor} />
         </div>
-        <div style={styles.cardBroker}>{account.broker || 'Fondeada'}</div>
+        <div style={styles.cardBroker}>{account.broker || (esPropio ? 'Capital propio' : 'Fondeada')}</div>
         {isLogrado && (
           <div style={styles.logradoBadge}>
             <CheckCircle size={13} /> Retiro listo
@@ -117,27 +118,33 @@ function FundedAccountCard({ account, onPress }) {
         </div>
       </div>
 
-      {/* Barra de progreso hacia retiro */}
-      <div style={styles.progressSection}>
-        <div style={styles.progressLabelRow}>
-          <span style={styles.metaLabel}>Progreso retiro ({targetRetiroPct}%)</span>
-          <span style={{ fontSize: 12, color: isLogrado ? '#30d158' : '#ff9f0a', fontWeight: 600 }}>
-            {isLogrado ? '🏆 Listo' : `Faltan $${faltaUsd.toLocaleString()}`}
-          </span>
+      {/* Barra de progreso hacia retiro — oculta en propio */}
+      {!esPropio && (
+        <div style={styles.progressSection}>
+          <div style={styles.progressLabelRow}>
+            <span style={styles.metaLabel}>Progreso retiro ({targetRetiroPct}%)</span>
+            <span style={{ fontSize: 12, color: isLogrado ? '#30d158' : '#ff9f0a', fontWeight: 600 }}>
+              {isLogrado ? '🏆 Listo' : `Faltan $${faltaUsd.toLocaleString()}`}
+            </span>
+          </div>
+          <div style={styles.progressTrack}>
+            <div style={{
+              ...styles.progressFill,
+              width: `${progresoPct}%`,
+              background: isLogrado
+                ? 'linear-gradient(90deg, #30d158, #34c759)'
+                : 'linear-gradient(90deg, var(--accent-blue), #5e9eff)',
+            }} />
+          </div>
         </div>
-        <div style={styles.progressTrack}>
-          <div style={{
-            ...styles.progressFill,
-            width: `${progresoPct}%`,
-            background: isLogrado
-              ? 'linear-gradient(90deg, #30d158, #34c759)'
-              : 'linear-gradient(90deg, var(--accent-blue), #5e9eff)',
-          }} />
-        </div>
-      </div>
+      )}
 
-      {/* Footer: regla consistencia */}
-      {account.regla_consistencia && (
+      {/* Footer: regla consistencia / capital propio */}
+      {esPropio ? (
+        <div style={{ ...styles.consistencyBadge, color: '#5e9eff', backgroundColor: 'rgba(94,158,255,0.1)' }}>
+          🏦 Capital propio · Balance libre
+        </div>
+      ) : account.regla_consistencia && (
         <div style={styles.consistencyBadge}>
           <TrendingUp size={12} /> Regla de consistencia activa
         </div>
