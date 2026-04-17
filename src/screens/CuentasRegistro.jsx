@@ -454,7 +454,7 @@ function CuentaRow({ r, onEdit, onDelete, onUpdate, navigate }) {
         </div>
         <div style={styles.rowNameSub}>
           {(r.cobros || []).length} cobro{(r.cobros || []).length !== 1 ? 's' : ''}
-          {r.tipo === 'challenge' && r.slot ? ` · Slot ${r.slot}` : ''}
+          {r.tipo === 'challenge' ? ' · Challenge' : r.tipo === 'fondeada' ? ' · Fondeada' : ''}
         </div>
       </div>
 
