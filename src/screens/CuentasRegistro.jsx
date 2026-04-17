@@ -3,7 +3,7 @@ import {
   collection, query, where, getDocs, addDoc, updateDoc,
   deleteDoc, doc,
 } from 'firebase/firestore';
-import { Plus, Edit3, Trash2, X, DollarSign, ArrowRight, History, Search } from 'lucide-react';
+import { Plus, Edit3, Trash2, X, DollarSign, ArrowRight, Search } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { useNavigate } from 'react-router';
 import { db } from '../lib/firebase';
@@ -207,14 +207,29 @@ export default function CuentasRegistro() {
     await handleUpdateField(editing, { cobros: (editing.cobros || []).filter(c => c.id !== cobroId) });
   };
 
+  // ── Lista unificada y ordenada ───────────────────────────────────────────────
+  const ORDER = { activo: 0, danger: 1, aprobada: 2, quemada: 3, archivada: 4, historico: 5 };
+  const allSorted = [...operativas, ...historicas].sort((a, b) => {
+    const pa = a.tipo === 'historico' ? ORDER.historico
+      : a.tipo === 'fondeada' ? (a.estado === 'quemada' ? ORDER.quemada : 0)
+      : (ORDER[a.estado] ?? 0);
+    const pb = b.tipo === 'historico' ? ORDER.historico
+      : b.tipo === 'fondeada' ? (b.estado === 'quemada' ? ORDER.quemada : 0)
+      : (ORDER[b.estado] ?? 0);
+    if (pa !== pb) return pa - pb;
+    return (a.nombre || '').localeCompare(b.nombre || '');
+  });
+
   // ── Filtro por búsqueda ──────────────────────────────────────────────────────
   const q = search.toLowerCase().trim();
-  const filteredOperativas = q
-    ? operativas.filter(r => (r.nombre || '').toLowerCase().includes(q) || (r.broker || '').toLowerCase().includes(q) || (r.slot || '').toLowerCase().includes(q))
-    : operativas;
-  const filteredHistoricas = q
-    ? historicas.filter(r => (r.nombre || '').toLowerCase().includes(q) || (r.notas || '').toLowerCase().includes(q))
-    : historicas;
+  const filteredAll = q
+    ? allSorted.filter(r =>
+        (r.nombre || '').toLowerCase().includes(q) ||
+        (r.broker || '').toLowerCase().includes(q) ||
+        (r.slot || '').toLowerCase().includes(q) ||
+        (r.notas || '').toLowerCase().includes(q)
+      )
+    : allSorted;
 
   // ── Totales (operativas + históricas) ───────────────────────────────────────
   const allRows = [...operativas, ...historicas];
@@ -318,21 +333,10 @@ export default function CuentasRegistro() {
             <span style={{ width: 80 }}></span>
           </div>
 
-          {/* Cuentas operativas (activas/fondeadas) */}
-          {filteredOperativas.map(r => <CuentaRow key={r.id} r={r} onEdit={() => setEditing(r)} onDelete={() => handleDelete(r)} onUpdate={handleUpdateField} navigate={navigate} />)}
+          {/* Lista unificada */}
+          {filteredAll.map(r => <CuentaRow key={r.id} r={r} onEdit={() => setEditing(r)} onDelete={() => handleDelete(r)} onUpdate={handleUpdateField} navigate={navigate} />)}
 
-          {/* Separador históricas */}
-          {filteredHistoricas.length > 0 && (
-            <div style={styles.sectionDivider}>
-              <History size={13} color="var(--text-secondary)" />
-              <span>Historial de cuentas anteriores</span>
-            </div>
-          )}
-
-          {/* Cuentas históricas */}
-          {filteredHistoricas.map(r => <CuentaRow key={r.id} r={r} onEdit={() => setEditing(r)} onDelete={() => handleDelete(r)} onUpdate={handleUpdateField} navigate={navigate} />)}
-
-          {filteredOperativas.length === 0 && filteredHistoricas.length === 0 && (
+          {filteredAll.length === 0 && (
             <div style={styles.emptyState}>
               <DollarSign size={32} color="var(--text-secondary)" />
               <div style={{ marginTop: 12 }}>No hay cuentas registradas.</div>
