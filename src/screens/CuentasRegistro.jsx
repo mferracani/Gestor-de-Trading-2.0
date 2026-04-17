@@ -3,7 +3,7 @@ import {
   collection, query, where, getDocs, addDoc, updateDoc,
   deleteDoc, doc,
 } from 'firebase/firestore';
-import { Plus, Edit3, Trash2, X, DollarSign, ArrowRight, History } from 'lucide-react';
+import { Plus, Edit3, Trash2, X, DollarSign, ArrowRight, History, Search } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { useNavigate } from 'react-router';
 import { db } from '../lib/firebase';
@@ -42,6 +42,7 @@ export default function CuentasRegistro() {
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [search, setSearch] = useState('');
 
   // Form nueva cuenta
   const [tipoNuevo, setTipoNuevo] = useState('historico'); // 'challenge' | 'fondeada' | 'historico'
@@ -206,6 +207,15 @@ export default function CuentasRegistro() {
     await handleUpdateField(editing, { cobros: (editing.cobros || []).filter(c => c.id !== cobroId) });
   };
 
+  // ── Filtro por búsqueda ──────────────────────────────────────────────────────
+  const q = search.toLowerCase().trim();
+  const filteredOperativas = q
+    ? operativas.filter(r => (r.nombre || '').toLowerCase().includes(q) || (r.broker || '').toLowerCase().includes(q) || (r.slot || '').toLowerCase().includes(q))
+    : operativas;
+  const filteredHistoricas = q
+    ? historicas.filter(r => (r.nombre || '').toLowerCase().includes(q) || (r.notas || '').toLowerCase().includes(q))
+    : historicas;
+
   // ── Totales (operativas + históricas) ───────────────────────────────────────
   const allRows = [...operativas, ...historicas];
   const totalInvertido = allRows.reduce((s, r) => s + (Number(r.costo_usd) || 0), 0);
@@ -224,6 +234,22 @@ export default function CuentasRegistro() {
         <button style={styles.newBtn} onClick={() => setShowNew(v => !v)}>
           <Plus size={16} /><span>Nueva</span>
         </button>
+      </div>
+
+      {/* Buscador */}
+      <div style={styles.searchWrapper}>
+        <Search size={15} color="var(--text-secondary)" style={{ flexShrink: 0 }} />
+        <input
+          style={styles.searchInput}
+          placeholder="Buscar por nombre, broker, slot..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+        {search && (
+          <button style={styles.searchClear} onClick={() => setSearch('')}>
+            <X size={14} color="var(--text-secondary)" />
+          </button>
+        )}
       </div>
 
       {/* Totalizador */}
@@ -293,10 +319,10 @@ export default function CuentasRegistro() {
           </div>
 
           {/* Cuentas operativas (activas/fondeadas) */}
-          {operativas.map(r => <CuentaRow key={r.id} r={r} onEdit={() => setEditing(r)} onDelete={() => handleDelete(r)} onUpdate={handleUpdateField} navigate={navigate} />)}
+          {filteredOperativas.map(r => <CuentaRow key={r.id} r={r} onEdit={() => setEditing(r)} onDelete={() => handleDelete(r)} onUpdate={handleUpdateField} navigate={navigate} />)}
 
           {/* Separador históricas */}
-          {historicas.length > 0 && (
+          {filteredHistoricas.length > 0 && (
             <div style={styles.sectionDivider}>
               <History size={13} color="var(--text-secondary)" />
               <span>Historial de cuentas anteriores</span>
@@ -304,9 +330,9 @@ export default function CuentasRegistro() {
           )}
 
           {/* Cuentas históricas */}
-          {historicas.map(r => <CuentaRow key={r.id} r={r} onEdit={() => setEditing(r)} onDelete={() => handleDelete(r)} onUpdate={handleUpdateField} navigate={navigate} />)}
+          {filteredHistoricas.map(r => <CuentaRow key={r.id} r={r} onEdit={() => setEditing(r)} onDelete={() => handleDelete(r)} onUpdate={handleUpdateField} navigate={navigate} />)}
 
-          {operativas.length === 0 && historicas.length === 0 && (
+          {filteredOperativas.length === 0 && filteredHistoricas.length === 0 && (
             <div style={styles.emptyState}>
               <DollarSign size={32} color="var(--text-secondary)" />
               <div style={{ marginTop: 12 }}>No hay cuentas registradas.</div>
@@ -529,6 +555,9 @@ const styles = {
   title: { fontSize: 24, fontWeight: 700, margin: 0 },
   subtitle: { fontSize: 13, color: 'var(--text-secondary)', margin: '4px 0 0' },
   newBtn: { display: 'flex', alignItems: 'center', gap: 6, backgroundColor: 'var(--accent-blue)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 14px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
+  searchWrapper: { display: 'flex', alignItems: 'center', gap: 8, backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 12, padding: '9px 12px', marginBottom: 14 },
+  searchInput: { flex: 1, background: 'transparent', border: 'none', outline: 'none', fontSize: 14, color: 'var(--text-primary)', minWidth: 0 },
+  searchClear: { background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' },
   totalsRow: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 },
   totalCard: { backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 14, padding: '14px 16px' },
   totalLabel: { fontSize: 11, color: 'var(--text-secondary)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
