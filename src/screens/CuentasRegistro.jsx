@@ -221,6 +221,20 @@ export default function CuentasRegistro() {
     }
   };
 
+  const handleDescartarTodos = async (costoPorCuenta) => {
+    if (!window.confirm(`¿Descartar los ${huerfanos.length} registros viejos y marcar todas las cuentas con un costo de $${costoPorCuenta}?`)) return;
+    try {
+      // Borrar todos los huérfanos
+      await Promise.all(huerfanos.map(h => deleteDoc(doc(db, 'cuentas_registro', h.id))));
+      // Setear costo en todas las cuentas operativas
+      await Promise.all(rows.map(r => updateDoc(doc(db, r.col, r.id), { costo_usd: costoPorCuenta })));
+      addToast('Listo. Registros eliminados y costo actualizado.', 'success');
+      await load();
+    } catch {
+      addToast('Error al descartar.', 'error');
+    }
+  };
+
   // ── Totales ──────────────────────────────────────────────────────────────────
   const totalInvertido = rows.reduce((s, r) => s + (Number(r.costo_usd) || 0), 0);
   const totalCobrado = rows.reduce(
@@ -253,10 +267,17 @@ export default function CuentasRegistro() {
       {huerfanos.length > 0 && (
         <div style={styles.migrationBanner}>
           <AlertCircle size={16} color="#ff9f0a" />
-          <span style={{ flex: 1, fontSize: 13 }}>
-            <strong>{huerfanos.length} registro{huerfanos.length > 1 ? 's' : ''}</strong> del sistema anterior sin vincular.
-            Hacé clic en "Vincular" para asignarlos a una cuenta.
-          </span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ flex: 1, fontSize: 13 }}>
+              <strong>{huerfanos.length} registro{huerfanos.length > 1 ? 's' : ''}</strong> del sistema anterior sin vincular.
+            </span>
+            <button
+              style={{ ...styles.btnPrimary, padding: '6px 12px', fontSize: 12, backgroundColor: '#ff9f0a', flexShrink: 0 }}
+              onClick={() => handleDescartarTodos(40)}
+            >
+              Descartar todos — marcar $40 c/u
+            </button>
+          </div>
           {huerfanos.map(h => (
             <HuerfanoRow key={h.id} huerfano={h} rows={rows} onLink={handleLinkHuerfano} />
           ))}
